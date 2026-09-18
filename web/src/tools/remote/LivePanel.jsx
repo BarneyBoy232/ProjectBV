@@ -15,7 +15,6 @@ export function LivePanel({ device }) {
   const [perf, setPerf] = useState(null)
   const [full, setFull] = useState(false)
   const [showLimits, setShowLimits] = useState(false)
-  const [locked, setLocked] = useState(false)   // pointer captured (mouse-lock mode)
   const [sound, setSound] = useState(false)      // listening to the device's audio
   const [frozen, setFrozen] = useState(false)    // their keyboard + mouse blocked
   const canFreeze = (device.caps || []).includes('blockinput')
@@ -84,27 +83,8 @@ export function LivePanel({ device }) {
     return () => { try { navigator.keyboard?.unlock?.() } catch {} }
   }, [full, controlling])
 
-  // --- mouse-lock mode ----------------------------------------------------
-  // The fix for "my cursor and theirs don't line up": capture the operator's
-  // pointer and hide it, then send only how FAR it moved. The device nudges its
-  // own real cursor by the same amount, so there is one cursor, always aligned —
-  // never a second local cursor drifting away from the remote one.
-  useEffect(() => {
-    const onChange = () => setLocked(document.pointerLockElement === videoRef.current)
-    document.addEventListener('pointerlockchange', onChange)
-    return () => document.removeEventListener('pointerlockchange', onChange)
-  }, [])
-
-  function lockPointer() { try { videoRef.current?.requestPointerLock?.() } catch {} }
-
-  // setControl is the one place control turns on/off, so lock mode follows it: on
-  // means capture the pointer, off means release it. Called straight from the
-  // toggle's click so the browser accepts the pointer-lock request as a gesture.
-  function setControl(on) {
-    setControlling(on)
-    if (on) lockPointer()
-    else { try { if (document.pointerLockElement) document.exitPointerLock?.() } catch {} }
-  }
+  // The one place control turns on/off.
+  function setControl(on) { setControlling(on) }
 
   // Listening plays the device's audio through the same <video>; muted otherwise.
   useEffect(() => { if (videoRef.current) videoRef.current.muted = !sound }, [sound, state])
@@ -129,34 +109,22 @@ export function LivePanel({ device }) {
     const y = (e.clientY - rect.top - offY) / scale
     return { x: Math.max(0, Math.min(vw, x)), y: Math.max(0, Math.min(vh, y)) }
   }
-  function captureScale() {
-    const v = videoRef.current
-    if (!v) return 1
-    const rect = v.getBoundingClientRect()
-    const vw = v.videoWidth, vh = v.videoHeight
-    if (!vw || !vh) return 1
-    return Math.min(rect.width / vw, rect.height / vh) || 1
-  }
+  // Absolute, snap-to-cursor: wherever you point over the live screen, the device's
+  // cursor jumps to that exact spot. Your local pointer is hidden over the video
+  // (see videoStyle) so you only ever see theirs, sitting right under where you aim.
   function onMove(e) {
     if (!controlling) return
     const now = performance.now()
     if (now - lastMove.current < 15) return
     lastMove.current = now
-    if (document.pointerLockElement === videoRef.current) {
-      const s = captureScale()
-      send({ t: 'mr', dx: e.movementX / s, dy: e.movementY / s })
-    } else {
-      const { x, y } = toRemote(e)
-      send({ t: 'm', x, y })
-    }
+    const { x, y } = toRemote(e)
+    send({ t: 'm', x, y })
   }
   function onDown(e) {
     if (!controlling) return
     e.preventDefault()
-    if (document.pointerLockElement !== videoRef.current) {
-      lockPointer()                       // this click is the gesture that re-locks
-      const { x, y } = toRemote(e); send({ t: 'm', x, y })
-    }
+    const { x, y } = toRemote(e)
+    send({ t: 'm', x, y })          // land the cursor under the click first
     send({ t: 'd', b: e.button })
   }
   function onUp(e) { if (!controlling) return; e.preventDefault(); send({ t: 'u', b: e.button }) }
@@ -256,7 +224,7 @@ export function LivePanel({ device }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: connected ? 'pointer' : 'not-allowed', opacity: connected ? 1 : 0.5 }}>
           <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControl(e.target.checked)} />
-          Take control (mouse-lock: your pointer is captured and aligns with theirs — press Esc to release)
+          Take control (their cursor snaps to wherever you point on the screen; they can still use theirs too)
         </label>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           {perf && (
