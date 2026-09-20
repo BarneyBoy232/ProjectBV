@@ -22,6 +22,16 @@ export function DevicePanel({ device, queued = null, onChanged }) {
   const [enabledOverride, setEnabledOverride] = useState(null)
   const isEnabled = enabledOverride !== null ? enabledOverride : device.enabled
 
+  // Close the ⋯ menu on any click elsewhere (including a tab switch) — otherwise it
+  // hangs open over the content until you re-click ⋯. Deferred a tick so the click
+  // that opened it doesn't immediately close it again.
+  useEffect(() => {
+    if (!menuOpen) return undefined
+    const close = () => setMenuOpen(false)
+    const t = setTimeout(() => document.addEventListener('click', close), 0)
+    return () => { clearTimeout(t); document.removeEventListener('click', close) }
+  }, [menuOpen])
+
   async function doPing() {
     setPinging(true); setPing(null)
     try { const r = await runCommand(device.id, CMD.PING, {}, 10000); setPing({ ok: r.ok, text: `${r.output} · ${ago(r.ts)}` }) }

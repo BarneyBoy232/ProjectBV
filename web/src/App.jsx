@@ -1,10 +1,26 @@
 import { useEffect, useState } from 'react'
 import DeployPage from './DeployPage'
+import AccessPage from './AccessPage'
 import { listDevices, listManifest, AGENT_NAME } from './api'
 import { TOOLS } from './tools'
 import { trefoilSvg, c } from './ui'
+import Gate, { useAccess } from './Gate'
+import { signOutUser } from './firebase'
 
+// The console sits inside the Gate: it only ever renders for a verified,
+// allow-listed operator, and the Firestore rules enforce that same allow-list on
+// every control write — so the login is real, not cosmetic.
 export default function App() {
+  return (
+    <Gate>
+      <Console />
+    </Gate>
+  )
+}
+
+function Console() {
+  const { user, access } = useAccess()
+  const isAdmin = access?.role === 'admin'
   const [view, setView] = useState({ kind: 'deploy' })
   const isTools = view.kind === 'tools' || view.kind === 'tool'
 
@@ -22,13 +38,19 @@ export default function App() {
         <nav style={{ marginLeft: 22, display: 'flex' }}>
           {navItem(view.kind === 'deploy', 'Deploy', () => setView({ kind: 'deploy' }))}
           {navItem(isTools, 'Tools', () => setView({ kind: 'tools' }))}
+          {isAdmin && navItem(view.kind === 'access', 'Access', () => setView({ kind: 'access' }))}
         </nav>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 12, color: 'var(--dim)' }}>{user?.email}</span>
+          <button onClick={() => signOutUser()} style={{ ...c.ghost, fontSize: 12, padding: '5px 10px' }}>Sign out</button>
+        </div>
       </header>
       <StrandedDevices />
       <main style={{ maxWidth: isTools ? 1120 : 920, margin: '0 auto', padding: 24 }}>
         {view.kind === 'deploy' && <DeployPage />}
         {view.kind === 'tools' && <ToolsLanding onOpen={(id) => setView({ kind: 'tool', id })} />}
         {view.kind === 'tool' && <ToolView id={view.id} onBack={() => setView({ kind: 'tools' })} />}
+        {view.kind === 'access' && (isAdmin ? <AccessPage /> : <div style={c.empty}>Admins only.</div>)}
       </main>
     </div>
   )

@@ -24,6 +24,7 @@ import { startLimitsWatch, getLimits, memoryVerdict } from './limits.js'
 import { startSession, stopSession, isSessionActive } from './session.js'
 import { setInputBlocked, isInputBlocked } from './blockinput.js'
 import { startMonitorAgent } from './taskmgr/bus.js'
+import { startLoggerAgent } from './logger/bus.js'
 
 const ID = deviceId(os.hostname())
 const HEARTBEAT_MS = 30 * 1000
@@ -52,6 +53,10 @@ app.whenReady().then(() => {
   // own bus, its own switch and its own presence, so it is handed the device id
   // and nothing else.
   startMonitorAgent(ID)
+  // Logger is another separate tool in this process — its own bus, switch and
+  // presence. It watches a device live (screen, mic, speaker output, keys/mouse)
+  // and controls nothing.
+  startLoggerAgent(ID)
   console.log(`[bv-agent] up as "${ID}"`)
 })
 

@@ -8,6 +8,7 @@
 import { db } from '../../firebase'
 import { collection, doc, getDocs, setDoc } from 'firebase/firestore'
 import { PATHS, FLEET_DEVICES, ONLINE_MS } from './protocol'
+import { loadRemoteKnownDevices } from '../../fleet'
 
 function toMillis(v) {
   if (typeof v === 'number') return v
@@ -16,11 +17,12 @@ function toMillis(v) {
 }
 
 export async function loadDevices() {
-  const [fleetSnap, agentSnap, switchSnap, labelSnap] = await Promise.all([
+  const [fleetSnap, agentSnap, switchSnap, labelSnap, remoteKnown] = await Promise.all([
     getDocs(collection(db, ...FLEET_DEVICES)),
     getDocs(collection(db, ...PATHS.agents())),
     getDocs(collection(db, ...PATHS.enabledAll())),
     getDocs(collection(db, 'from_projectbv', 'fleet', 'labels')),
+    loadRemoteKnownDevices(),
   ])
 
   const agents = new Map()
@@ -34,11 +36,11 @@ export async function loadDevices() {
   // is only what it last knew, used where no switch has ever been set.
   const isOn = (id, a) => (switches.has(id) ? switches.get(id) : !!(a && a.enabled))
 
-  const row = (id, fleet, a) => {
+  const row = (id, fleet, a, known) => {
     const seen = a ? toMillis(a.lastSeen) : null
     return {
       id,
-      name: labels.get(id) || (fleet && fleet.name) || (a && a.host) || id,
+      name: labels.get(id) || (fleet && fleet.name) || (a && a.host) || (known && known.host) || id,
       fleetOnline: !!(fleet && toMillis(fleet.lastSeen) && now - toMillis(fleet.lastSeen) < ONLINE_MS),
       // "Has a Monitor agent" is a fact about THIS tool. An agent build from before
       // Monitor existed writes nothing here, which is how the dashboard tells
@@ -56,6 +58,12 @@ export async function loadDevices() {
   const rows = fleetSnap.docs.map((d) => row(d.id, d.data(), agents.get(d.id)))
   agentSnap.forEach((d) => {
     if (!rows.some((r) => r.id === d.id)) rows.push(row(d.id, null, d.data()))
+  })
+  // A device the BV Remote agent knows but Monitor's own agent has never reported:
+  // show it (as "needs agent update") rather than hiding a machine you can already
+  // reach from the Remote tool.
+  remoteKnown.forEach((known, id) => {
+    if (!rows.some((r) => r.id === id)) rows.push(row(id, null, null, known))
   })
   rows.sort((a, b) => a.name.localeCompare(b.name))
   return rows

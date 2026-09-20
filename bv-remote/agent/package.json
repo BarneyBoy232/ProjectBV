@@ -1,6 +1,6 @@
 {
   "name": "@bv/agent",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "main": "src/main.js",
@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.0",
-    "firebase": "^10.13.0"
+    "firebase": "^10.13.0",
+    "uiohook-napi": "^1.5.4"
   },
   "devDependencies": {
     "electron": "^31.0.0",
@@ -24,6 +25,7 @@
     "electronVersion": "31.7.7",
     "directories": { "output": "dist" },
     "files": ["src/**/*"],
+    "asarUnpack": ["**/node_modules/uiohook-napi/**"],
     "win": {
       "target": "nsis",
       "artifactName": "BV-Remote-Agent-Setup-${version}.exe",

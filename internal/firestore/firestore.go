@@ -38,15 +38,24 @@ func (c *Client) docsURL(path string) string {
 // --- typed value (de)coding --------------------------------------------
 
 type value struct {
-	StringValue  *string `json:"stringValue,omitempty"`
-	IntegerValue *string `json:"integerValue,omitempty"`
-	BooleanValue *bool   `json:"booleanValue,omitempty"`
+	StringValue  *string  `json:"stringValue,omitempty"`
+	IntegerValue *string  `json:"integerValue,omitempty"`
+	DoubleValue  *float64 `json:"doubleValue,omitempty"`
+	BooleanValue *bool    `json:"booleanValue,omitempty"`
+	NullValue    *string  `json:"nullValue,omitempty"`
 	ArrayValue   *struct {
 		Values []value `json:"values,omitempty"`
 	} `json:"arrayValue,omitempty"`
+	// A nested object, e.g. a command's `args`. Read by the Files bus, which needs
+	// the whole args map to verify a signature and to act.
+	MapValue *struct {
+		Fields map[string]value `json:"fields,omitempty"`
+	} `json:"mapValue,omitempty"`
 }
 
-// decode turns a typed value into a plain Go value (string, int64, bool, []string).
+// decode turns a typed value into a plain Go value (string, int64, float64, bool,
+// []string for a string array, []any for a mixed array, or map[string]any for a
+// nested object).
 func (v value) decode() any {
 	switch {
 	case v.StringValue != nil:
@@ -54,14 +63,36 @@ func (v value) decode() any {
 	case v.IntegerValue != nil:
 		n, _ := strconv.ParseInt(*v.IntegerValue, 10, 64)
 		return n
+	case v.DoubleValue != nil:
+		return *v.DoubleValue
 	case v.BooleanValue != nil:
 		return *v.BooleanValue
+	case v.MapValue != nil:
+		m := map[string]any{}
+		for k, e := range v.MapValue.Fields {
+			m[k] = e.decode()
+		}
+		return m
 	case v.ArrayValue != nil:
-		out := make([]string, 0, len(v.ArrayValue.Values))
+		// Stay backwards compatible: an all-strings array still decodes to
+		// []string (what the updater's Targets expects); anything else to []any.
+		allStrings := true
 		for _, e := range v.ArrayValue.Values {
-			if e.StringValue != nil {
+			if e.StringValue == nil {
+				allStrings = false
+				break
+			}
+		}
+		if allStrings {
+			out := make([]string, 0, len(v.ArrayValue.Values))
+			for _, e := range v.ArrayValue.Values {
 				out = append(out, *e.StringValue)
 			}
+			return out
+		}
+		out := make([]any, 0, len(v.ArrayValue.Values))
+		for _, e := range v.ArrayValue.Values {
+			out = append(out, e.decode())
 		}
 		return out
 	}
@@ -124,6 +155,56 @@ func (c *Client) List(ctx context.Context, collectionPath string) ([]map[string]
 		docs = append(docs, m)
 	}
 	return docs, nil
+}
+
+// Get reads one document. It returns (nil, nil) when the document does not exist,
+// so a missing command doc is an ordinary empty poll, not an error.
+func (c *Client) Get(ctx context.Context, documentPath string) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.docsURL(documentPath), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return nil, fmt.Errorf("firestore get HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(b))
+	}
+	var out struct {
+		Fields map[string]value `json:"fields"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	m := map[string]any{}
+	for k, v := range out.Fields {
+		m[k] = v.decode()
+	}
+	return m, nil
+}
+
+// Delete removes a document. A 404 is treated as success (already gone).
+func (c *Client) Delete(ctx context.Context, documentPath string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.docsURL(documentPath), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("firestore delete HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(b))
+	}
+	return nil
 }
 
 // Set upserts a document (create or overwrite) at documentPath with the fields.

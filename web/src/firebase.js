@@ -1,11 +1,17 @@
 // Firebase connection for the projectBV dashboard.
-// This is your Runic Firebase project (via Abstrak). These web-config values are
-// safe to ship in client code — they are NOT secrets (they only identify the
-// project; access is governed by Firestore/Storage rules).
+// The web-config values are NOT secrets — they only identify the Runic project.
+// Access is governed by the Firestore/Storage rules, which now require a
+// verified, allow-listed Google account for anything that controls a device.
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
-import { getAuth, signInAnonymously } from 'firebase/auth'
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+} from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: 'AIzaSyAVUpYv80vSSZQnNibHOpow8qu-rPTL9lE',
@@ -20,12 +26,29 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig)
 export const db = getFirestore(app)
 export const storage = getStorage(app)
+export const auth = getAuth(app)
 
-// Storage's default rules require an authenticated request. We use anonymous
-// sign-in so uploads work without any real login. (Firestore is already open.)
-const auth = getAuth(app)
-let authPromise = null
+const provider = new GoogleAuthProvider()
+// Always let the operator choose the account, so a shared machine never silently
+// signs in as the wrong Google user.
+provider.setCustomParameters({ prompt: 'select_account' })
+
+export function signInWithGoogle() {
+  return signInWithPopup(auth, provider)
+}
+
+export function signOutUser() {
+  return signOut(auth)
+}
+
+// Fires once with the current user (or null) and again on every change.
+export function watchAuth(cb) {
+  return onAuthStateChanged(auth, cb)
+}
+
+// Storage rules require an authenticated request. The whole app now sits behind a
+// Google login, so by the time anything uploads, a real user is signed in — this
+// just hands back that user (no more anonymous sign-in).
 export function ensureAuth() {
-  if (!authPromise) authPromise = signInAnonymously(auth)
-  return authPromise
+  return Promise.resolve(auth.currentUser)
 }

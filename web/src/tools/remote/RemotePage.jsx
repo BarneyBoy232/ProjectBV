@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react'
 import { loadDevices } from './data'
 import { DevicePanel } from './panels'
 import { watchAgentManifest } from './deploy'
+import { usePersistentSelection } from '../../persist'
 import { c, ago } from '../../ui'
 
 // The Remote tool: install the agent — on the whole fleet or on one device — then
 // pick a device to control.
 export default function RemotePage() {
   const [devices, setDevices] = useState([])
-  const [selected, setSelected] = useState(null)
+  const [selected, setSelected] = usePersistentSelection('device')
   const [err, setErr] = useState(null)
   // undefined = still loading; otherwise { devices } from the manifest.
   const [manifest, setManifest] = useState(undefined)
@@ -27,13 +28,13 @@ export default function RemotePage() {
 
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 20, alignItems: 'start' }}>
+      <div className="tool-grid">
         <aside>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
             <h2 style={c.h2}>Fleet devices</h2>
             {devices.length > 0 && <span style={{ fontSize: 12, color: 'var(--dim)' }}>{online} online / {devices.length}</span>}
           </div>
-          {err && <div style={{ color: '#ff5c5c', fontSize: 13, marginBottom: 10 }}>{err}</div>}
+          {err && <div style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
           {devices.length === 0 ? (
             <div style={c.empty}>No devices yet.</div>
           ) : devices.map((d) => {

@@ -4,6 +4,7 @@ import { watchDevice, act } from './data'
 import ProcessesTab, { groupOf } from './ProcessesTab'
 import PerformanceTab from './PerformanceTab'
 import { ServicesTab, StartupTab, UsersTab } from './ListTabs'
+import { usePersistentSelection } from '../../persist'
 import { c, ago } from '../../ui'
 
 const TABS = [
@@ -37,7 +38,7 @@ function pushByName(map, items, value) {
 
 export default function MonitorPage() {
   const [devices, setDevices] = useState([])
-  const [selected, setSelected] = useState(null)
+  const [selected, setSelected] = usePersistentSelection('device')
   const [err, setErr] = useState(null)
 
   async function refresh() {
@@ -50,7 +51,7 @@ export default function MonitorPage() {
   const ready = devices.filter((d) => d.agentOnline && d.enabled).length
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 280px) 1fr', gap: 20, alignItems: 'start' }}>
+    <div className="tool-grid">
       <aside>
         <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 12 }}>
           <h2 style={c.h2}>Fleet devices</h2>
@@ -59,7 +60,7 @@ export default function MonitorPage() {
         {err && <div style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
         {devices.length === 0 ? <div style={c.empty}>No devices yet.</div> : devices.map((d) => {
           const on = selected === d.id
-          const label = !d.hasAgent ? 'no Task Manager agent'
+          const label = !d.hasAgent ? 'needs agent update'
             : !d.agentOnline ? `offline · ${ago(d.agentLastSeen)}`
             : d.enabled ? (d.streaming ? 'streaming' : 'ready') : 'switched off'
           return (

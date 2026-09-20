@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"projectbv/internal/config"
+	"projectbv/internal/files"
 	"projectbv/internal/firestore"
 	"projectbv/internal/tailscale"
 	"projectbv/internal/updater"
@@ -82,6 +83,11 @@ func (p *program) run(ctx context.Context) {
 	// machine whose tunnel state folder isn't writable (the standard-account case)
 	// looks dead while it is perfectly alive.
 	go p.heartbeatLoop(ctx, fs)
+
+	// Files tool: browse/download/upload/reorganise this machine's disk from the
+	// dashboard. Runs here in the service (LocalSystem, no login needed), which is
+	// what lets it recover files from a device nobody can sign into.
+	go files.Run(ctx, fs, http.DefaultClient, deviceID(), deviceID(), p.logger)
 
 	// Bring the tunnel up in the background, best-effort and time-bounded, so a
 	// slow or failing tsnet can delay nothing else. The heartbeat picks up the

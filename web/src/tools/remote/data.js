@@ -21,15 +21,20 @@ function toMillis(v) {
 // can be switched on before its agent has ever checked in, and the console has to
 // show that rather than pretend the device is off.
 export async function loadDevices() {
-  const [fleetSnap, agentSnap, switchSnap] = await Promise.all([
+  const [fleetSnap, agentSnap, switchSnap, labelSnap] = await Promise.all([
     getDocs(collection(db, ...FLEET_DEVICES)),
     getDocs(collection(db, ...PATHS.agents())),
     getDocs(collection(db, ...PATHS.enabledAll())),
+    getDocs(collection(db, 'from_projectbv', 'fleet', 'labels')),
   ])
   const agents = new Map()
   agentSnap.forEach((d) => agents.set(d.id, d.data()))
   const switches = new Map()
   switchSnap.forEach((d) => switches.set(d.id, !!(d.data() || {}).enabled))
+  // The operator's own device names, shared with every other tool. Remote once showed
+  // raw hostnames while Task Manager/Logger/Files showed the label, so the same machine
+  // looked like two — read the same labels so a device reads identically everywhere.
+  const labels = new Map(labelSnap.docs.map((d) => [d.id, (d.data() || {}).label || '']))
   const now = Date.now()
   // The switch is the operator's intent and wins; the heartbeat is what the agent
   // last reported, used only where no switch has ever been set.
@@ -42,7 +47,7 @@ export async function loadDevices() {
     const agentSeen = a ? toMillis(a.lastSeen) : null
     return {
       id: d.id,
-      name: f.name || d.id,
+      name: labels.get(d.id) || f.name || d.id,
       fleetOnline: !!(fleetSeen && now - fleetSeen < ONLINE_MS),
       hasAgent: !!a,
       agentOnline: !!(a && a.online && agentSeen && now - agentSeen < ONLINE_MS),
@@ -54,7 +59,7 @@ export async function loadDevices() {
     if (rows.some((r) => r.id === d.id)) return
     const a = d.data()
     const agentSeen = toMillis(a.lastSeen)
-    rows.push({ id: d.id, name: a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen, enabled: isEnabled(d.id, a) })
+    rows.push({ id: d.id, name: labels.get(d.id) || a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen, enabled: isEnabled(d.id, a) })
   })
   rows.sort((x, y) => x.name.localeCompare(y.name))
   return rows

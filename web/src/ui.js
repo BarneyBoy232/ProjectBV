@@ -49,6 +49,34 @@ export const remoteLogoSvg = (size = 22) => ({
   </svg>`,
 })
 
+// The Logger tool mark (an eye over a sound wave — watch + listen), used in the
+// Tools list + Logger page.
+export const loggerLogoSvg = (size = 22) => ({
+  __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <path d="M10 40 C28 20 72 20 90 40 C72 60 28 60 10 40 Z" fill="none" stroke="#ffd200" stroke-width="7" stroke-linejoin="round"/>
+    <circle cx="50" cy="40" r="11" fill="#ffd200"/>
+    <g stroke="#ffd200" stroke-width="6" stroke-linecap="round">
+      <path d="M22 78 L22 74"/>
+      <path d="M35 82 L35 66"/>
+      <path d="M48 86 L48 60"/>
+      <path d="M61 82 L61 66"/>
+      <path d="M74 78 L74 74"/>
+    </g>
+  </svg>`,
+})
+
+// The Files tool mark (a folder with a down-arrow — browse + retrieve), used in
+// the Tools list + Files page.
+export const filesLogoSvg = (size = 22) => ({
+  __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <path d="M12 28 L40 28 L48 38 L88 38 L88 78 L12 78 Z" fill="none" stroke="#ffd200" stroke-width="7" stroke-linejoin="round"/>
+    <g stroke="#ffd200" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M50 50 L50 68"/>
+      <path d="M40 60 L50 70 L60 60"/>
+    </g>
+  </svg>`,
+})
+
 // The Monitor tool mark (a gauge dial), used in the Tools list + Monitor page.
 export const monitorLogoSvg = (size = 22) => ({
   __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">

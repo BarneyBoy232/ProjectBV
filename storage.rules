@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// projectBV — Firebase Storage security rules.
+//
+// STATUS: written, NOT deployed. Deploy with:
+//     firebase deploy --only storage
+//
+// ---------------------------------------------------------------------------
+// The Files tool relays actual file bytes through Storage under projectbv/files/.
+// The device side is the Go service, which has NO Firebase auth (it is a REST
+// client with only the public web apiKey), so it cannot present an identity here.
+// That is the same position the fleet agent is in for Firestore.
+//
+// So these rules constrain SHAPE and SIZE, not identity. What protects the file
+// contents is that every blob is AES-GCM sealed with the Files tool's own secret
+// BEFORE it is uploaded (see internal/files/crypto.go and web/.../files/data.js):
+// the bucket only ever holds opaque ciphertext, and nothing without the secret can
+// read a byte of it. A blob is short-lived — the dashboard deletes an out/ blob
+// after downloading it, and the device deletes an in/ blob after writing it.
+//
+// The 200MB ceiling is a sanity cap on a single relayed file, not a security
+// boundary. Everything outside projectbv/files/ stays closed to unauthenticated
+// callers.
+// ---------------------------------------------------------------------------
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // The Files relay: sealed blobs in and out, world-open but opaque + capped.
+    match /projectbv/files/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.resource == null                       // a delete
+                   || request.resource.size < 200 * 1024 * 1024;      // an upload
+    }
+
+    // Deploy payloads (installers/files pushed to the fleet) are uploaded by the
+    // authenticated dashboard and downloaded by agents via tokenised URLs.
+    match /projectbv/{allPaths=**} {
+      allow read: if true;
+      allow write: if request.auth != null;
+    }
+
+    // Everything else is closed.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

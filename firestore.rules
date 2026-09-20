@@ -1,132 +1,153 @@
 rules_version = '2';
 
-// projectBV — Firestore security rules.
+// projectBV — Firestore security rules for the SHARED Runic project (runik-77e07).
 //
-// STATUS: written, NOT deployed. Committed here so the rule set is reviewable and
-// versioned instead of living only in the Firebase console. Deploy with:
-//     firebase deploy --only firestore:rules
+// IMPORTANT: this one ruleset governs the WHOLE project, which also hosts Runic
+// (root `artifacts/`) and the `from_runik-77e07` partition. projectBV lives under
+// `from_projectbv/`. Deploying rules that only mention projectBV would take Runic
+// offline, so Runic's paths are preserved wide-open here exactly as they were.
+// Only the projectBV partition is tightened.
 //
 // ---------------------------------------------------------------------------
-// What these rules can and cannot do, honestly
+// The gate, honestly
 //
 // Two of the three programs that touch this database are UNAUTHENTICATED by
-// design:
-//   • the Go fleet agent (internal/firestore) is a REST client with only the
-//     public web apiKey — it has no identity to check, and
-//   • the BV Remote device agent initialises Firebase without signing in.
-// Only the dashboard signs in, anonymously.
+// design and cannot present an identity:
+//   • the Go fleet agent (a REST client with only the public web apiKey), and
+//   • the BV Remote / Monitor / Logger / Files device agents (Firebase with no
+//     sign-in).
+// They only ever READ commands and WRITE their own heartbeats/results. So those
+// paths stay open + shape-constrained.
 //
-// So `request.auth != null` cannot be required anywhere without taking the fleet
-// offline, and anonymous auth would prove nothing anyway — anyone can obtain it.
-// These rules therefore constrain SHAPE and SIZE, not identity. They stop the
-// database being used as free storage or filled with junk that breaks a client;
-// they do not stop a determined reader.
+// The DANGEROUS writes — the ones that grant control of a device — are made ONLY
+// by the dashboard: turning a device's control ON (`enabled`), sending it a
+// COMMAND, changing the manifest/labels/settings, or taking a monitor lease.
+// Those now require a VERIFIED, ALLOW-LISTED Google identity. A leaked dashboard
+// URL, or the signing secret pulled from the JS bundle, is no longer enough:
+// without a signed-in allow-listed account, Firestore refuses the write. The HMAC
+// secret drops to a second, independent layer beneath identity.
 //
-// Content protection is done in the payload instead: Monitor's frames carry the
-// machine's process list, command lines and usernames, and are AES-GCM encrypted
-// with Monitor's own shared secret before they are written (see
-// bv-remote/agent/src/taskmgr/monitor.js). What is stored here is opaque.
-//
-// The real fix is per-device identity, at which point the `allow` lines below
-// become identity checks rather than shape checks.
+// The allow-list is live data: `from_projectbv/access/members/{email}`. The root
+// admin is hardcoded so there is always one account that can rebuild the list.
 // ---------------------------------------------------------------------------
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- deploy: what to install, and which devices are alive ---------------
-    // The manifest is written by the dashboard and read by every agent; the
-    // device documents are written by the agents themselves.
+    // ---- identity helpers -------------------------------------------------
+    function verified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    function em() { return request.auth.token.email; }
+    // The one hardcoded account, so the allow-list can always be rebuilt.
+    function isRoot() { return verified() && em() == 'ethan.barnacoat@gmail.com'; }
+    function isMember() {
+      return verified()
+        && exists(/databases/$(database)/documents/from_projectbv/access/members/$(em()));
+    }
+    // Anyone allowed to operate the console: the root admin, or a listed member.
+    function isOperator() { return isRoot() || isMember(); }
+
+    // =======================================================================
+    // projectBV — the fleet console partition
+    // =======================================================================
+
+    // The live allow-list. Only the root admin edits it; operators may read it
+    // (the console shows it), and a signed-in stranger simply gets denied.
+    match /from_projectbv/access/members/{email} {
+      allow read: if isOperator();
+      allow write: if isRoot();
+    }
+
+    // ---- deploy: what to install, and which devices are alive -------------
     match /from_projectbv/fleet/manifest/{entry} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasAll(['name', 'version', 'type'])
+      allow read: if true; // agents must read it unauthenticated
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['name', 'version', 'type'])
                    && request.resource.data.name is string
                    && request.resource.data.name.size() < 200;
     }
 
+    // Written by the agent's own heartbeat — no identity to check. Only an
+    // operator may DELETE a device row (removing a decommissioned/stale machine
+    // from the fleet); the agent never deletes its own doc.
     match /from_projectbv/fleet/devices/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 30;
+      allow delete: if isOperator();
     }
 
+    // Renaming is a dashboard action.
     match /from_projectbv/fleet/labels/{device} {
       allow read: if true;
-      allow write: if request.resource.data.keys().hasOnly(['label', 'ts']);
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['label', 'ts']);
+      allow delete: if isOperator();
     }
 
-    // --- remote control: presence, the command bus, WebRTC signalling -------
-    // Commands are HMAC-signed with the fleet's shared secret and the agent drops
-    // anything that does not verify, so an unsigned write here is inert.
+    // ---- remote control ---------------------------------------------------
+    // Presence + results are written by the device agent (unauthenticated).
     match /from_projectbv/remotedesk/agents/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 30;
     }
-
-    match /from_projectbv/remotedesk/enabled/{device} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasOnly(['enabled', 'ts']);
-    }
-
-    match /from_projectbv/remotedesk/commands/{device} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
-                   && request.resource.data.sig is string;
-    }
-
     match /from_projectbv/remotedesk/results/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 20;
     }
 
+    // Turning a device's control ON, and issuing commands, are the keys to the
+    // kingdom. Operator identity required.
+    match /from_projectbv/remotedesk/enabled/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+    match /from_projectbv/remotedesk/commands/{device} {
+      allow read: if true; // the device reads the command it must run
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+    match /from_projectbv/remotedesk/settings/{entry} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['appRamPct', 'machineRamPct', 'sig']);
+    }
+    // WebRTC signalling is written by BOTH the dashboard and the (unauthenticated)
+    // device, so it cannot require identity. It stays signed (HMAC) — and a session
+    // can only START via a command, which now DOES require an operator, so an
+    // attacker cannot open one anyway.
     match /from_projectbv/remotedesk/sessions/{device}/{sub=**} {
       allow read, write: if true;
     }
 
-    // The streaming ceilings. One document for the whole fleet, signed, so a write
-    // without the secret is ignored by every device that reads it.
-    match /from_projectbv/remotedesk/settings/{entry} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasAll(['appRamPct', 'machineRamPct', 'sig'])
-                   && request.resource.data.appRamPct is number
-                   && request.resource.data.machineRamPct is number
-                   && request.resource.data.sig is string;
-    }
-
-    // --- monitor: its own partition, not a corner of the remote tool's ------
-    // Monitor ships inside the same device agent but is a separate tool with its
-    // own secret, so it gets its own presence, switch, bus and frames.
+    // ---- monitor (task manager) partition ---------------------------------
     match /from_projectbv/monitor/agents/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 30;
     }
-
-    match /from_projectbv/monitor/enabled/{device} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasOnly(['enabled', 'ts']);
-    }
-
-    match /from_projectbv/monitor/commands/{device} {
-      allow read: if true;
-      allow write: if request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
-                   && request.resource.data.sig is string;
-    }
-
     match /from_projectbv/monitor/results/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 20;
     }
-
-    // The lease is signed; a write without `sig` is ignored by the device.
+    match /from_projectbv/monitor/enabled/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+    match /from_projectbv/monitor/commands/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
     match /from_projectbv/monitor/watch/{device} {
       allow read: if true;
-      allow write: if request.resource.data.keys().hasAll(['nonce', 'until', 'sig'])
-                   && request.resource.data.until is number
-                   && request.resource.data.sig is string;
-      allow delete: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['nonce', 'until', 'sig']);
+      allow delete: if isOperator();
     }
-
-    // The 900KB ceiling is Firestore's own 1MB document limit with room to spare —
-    // a real frame is 10-40KB, so anything near the cap is not a frame.
     match /from_projectbv/monitor/{store}/{device} {
       allow read: if store in ['frames', 'meta'];
       allow write: if store in ['frames', 'meta']
@@ -135,8 +156,65 @@ service cloud.firestore {
                    && request.resource.data.box.size() < 900000;
     }
 
-    // Anything not named above is closed. New collections have to be added here
-    // deliberately, so a new tool cannot quietly start writing wherever it likes.
+    // ---- logger partition -------------------------------------------------
+    match /from_projectbv/logger/agents/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+    match /from_projectbv/logger/results/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 20;
+    }
+    match /from_projectbv/logger/enabled/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+    match /from_projectbv/logger/commands/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+    match /from_projectbv/logger/sessions/{device}/{sub=**} {
+      allow read, write: if true;
+    }
+
+    // ---- files partition --------------------------------------------------
+    match /from_projectbv/files/agents/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+    match /from_projectbv/files/enabled/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+    match /from_projectbv/files/commands/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+    match /from_projectbv/files/results/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['id', 'box'])
+                   && request.resource.data.box is string
+                   && request.resource.data.box.size() < 900000;
+    }
+
+    // =======================================================================
+    // Runic and its partition — LEFT EXACTLY AS THEY WERE (open). projectBV is
+    // not tasked with securing Runic, and tightening these here would break it.
+    // =======================================================================
+    match /artifacts/{document=**} {
+      allow read, write: if true;
+    }
+    match /from_runik-77e07/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Anything not named above is closed.
     match /{document=**} {
       allow read, write: if false;
     }

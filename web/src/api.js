@@ -172,3 +172,13 @@ export async function deployFile({ name, version, file, dest, targets }) {
 export async function removeEntry(id) {
   await deleteDoc(doc(manifestCol, id))
 }
+
+// Remove a device from the fleet list (a decommissioned or stale machine). Clears
+// both its heartbeat doc and its friendly label. Operator-only, enforced by rules.
+// A device whose agent is still alive will simply reappear on its next check-in.
+export async function removeDevice(deviceId) {
+  await Promise.all([
+    deleteDoc(doc(devicesCol, deviceId)).catch(() => {}),
+    deleteDoc(doc(labelsCol, deviceId)).catch(() => {}),
+  ])
+}

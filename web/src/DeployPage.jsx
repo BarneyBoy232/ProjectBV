@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, setDeviceLabel, AGENT_NAME } from './api'
+import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, setDeviceLabel, removeDevice, AGENT_NAME } from './api'
 import { c, ago } from './ui'
 import agentBuild from './agent-build.json'
 
@@ -88,6 +88,13 @@ export default function DeployPage() {
     refresh()
   }
 
+  async function onRemoveDevice(d) {
+    const label = d.display || d.name || d.id
+    if (!confirm(`Remove "${label}" from the fleet? If its agent is still alive it will reappear on its next check-in.`)) return
+    await removeDevice(d.id)
+    refresh()
+  }
+
   const now = Date.now()
   return (
     <>
@@ -123,6 +130,13 @@ export default function DeployPage() {
                       {online ? 'online' : 'offline'}
                       {!online && <span style={{ color: 'var(--dim)' }}> · last seen {ago(d.lastSeen)}</span>}
                       <UpdateOutcome device={d} />
+                      {!online && (
+                        <button onClick={() => onRemoveDevice(d)}
+                          title="Remove this device from the list. A live agent reappears on its next check-in."
+                          style={{ marginLeft: 12, background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', fontSize: 12 }}>
+                          Remove
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
