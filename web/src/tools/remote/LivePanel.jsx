@@ -83,8 +83,21 @@ export function LivePanel({ device }) {
     return () => { try { navigator.keyboard?.unlock?.() } catch {} }
   }, [full, controlling])
 
-  // The one place control turns on/off.
-  function setControl(on) { setControlling(on) }
+  // Control is pointer-lock, GeForce-Now style: you grab the device by clicking its
+  // screen (which captures and hides your own cursor), then see and drive ONLY the
+  // device's cursor, with full range of motion, and Esc hands control back. There is
+  // only ever one visible cursor — theirs — so the two can never drift apart.
+  function setControl(on) {
+    if (on) videoRef.current?.requestPointerLock?.()
+    else document.exitPointerLock?.()
+  }
+  // controlling tracks the real pointer-lock state, not a checkbox, so releasing with
+  // Esc (or the browser dropping the lock for any reason) always turns control off.
+  useEffect(() => {
+    const onChange = () => setControlling(document.pointerLockElement === videoRef.current)
+    document.addEventListener('pointerlockchange', onChange)
+    return () => document.removeEventListener('pointerlockchange', onChange)
+  }, [])
 
   // Listening plays the device's audio through the same <video>; muted otherwise.
   useEffect(() => { if (videoRef.current) videoRef.current.muted = !sound }, [sound, state])
@@ -96,35 +109,31 @@ export function LivePanel({ device }) {
   }
 
   const send = (evt) => sessionRef.current?.sendInput(evt)
-  function toRemote(e) {
+  // While the pointer is locked, movement arrives as deltas in the <video>'s own CSS
+  // pixels. Convert them to captured-frame pixels (the agent then scales those to the
+  // device's real screen — see input.js 'mr'). Because deltas accumulate, the whole
+  // remote screen is reachable, not just the area of the panel.
+  function frameScale() {
     const v = videoRef.current
+    if (!v || !v.videoWidth || !v.videoHeight) return 1
     const rect = v.getBoundingClientRect()
-    const vw = v.videoWidth
-    const vh = v.videoHeight
-    if (!vw || !vh) return { x: 0, y: 0 }
-    const scale = Math.min(rect.width / vw, rect.height / vh)
-    const offX = (rect.width - vw * scale) / 2
-    const offY = (rect.height - vh * scale) / 2
-    const x = (e.clientX - rect.left - offX) / scale
-    const y = (e.clientY - rect.top - offY) / scale
-    return { x: Math.max(0, Math.min(vw, x)), y: Math.max(0, Math.min(vh, y)) }
+    return Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight) || 1
   }
-  // Absolute, snap-to-cursor: wherever you point over the live screen, the device's
-  // cursor jumps to that exact spot. Your local pointer is hidden over the video
-  // (see videoStyle) so you only ever see theirs, sitting right under where you aim.
   function onMove(e) {
     if (!controlling) return
     const now = performance.now()
-    if (now - lastMove.current < 15) return
+    if (now - lastMove.current < 10) return
     lastMove.current = now
-    const { x, y } = toRemote(e)
-    send({ t: 'm', x, y })
+    const s = frameScale()
+    send({ t: 'mr', dx: e.movementX / s, dy: e.movementY / s })
   }
+  // First click on the screen grabs control (locks the pointer). Once controlling,
+  // every click goes straight to the device — pointer lock keeps all of them on the
+  // video, so a click can never fall through onto the dashboard behind it.
   function onDown(e) {
-    if (!controlling) return
+    if (!connected) return
+    if (!controlling) { setControl(true); return }
     e.preventDefault()
-    const { x, y } = toRemote(e)
-    send({ t: 'm', x, y })          // land the cursor under the click first
     send({ t: 'd', b: e.button })
   }
   function onUp(e) { if (!controlling) return; e.preventDefault(); send({ t: 'u', b: e.button }) }
@@ -138,8 +147,17 @@ export function LivePanel({ device }) {
       const t = e.target
       return t && (t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName))
     }
-    const down = (e) => { if (mine(e)) return; e.preventDefault(); send({ t: 'k', a: 'down', code: e.code }) }
-    const up = (e) => { if (mine(e)) return; e.preventDefault(); send({ t: 'k', a: 'up', code: e.code }) }
+    // Escape is the release key — it hands control back rather than being sent to
+    // the device. It is the one, predictable way out of control.
+    const down = (e) => {
+      if (mine(e)) return
+      if (e.code === 'Escape') { document.exitPointerLock?.(); return }
+      e.preventDefault(); send({ t: 'k', a: 'down', code: e.code })
+    }
+    const up = (e) => {
+      if (mine(e) || e.code === 'Escape') return
+      e.preventDefault(); send({ t: 'k', a: 'up', code: e.code })
+    }
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
     return () => { window.removeEventListener('keydown', down, true); window.removeEventListener('keyup', up, true) }
@@ -175,9 +193,12 @@ export function LivePanel({ device }) {
   const stageStyle = full
     ? { position: 'relative', background: '#000', width: '100vw', height: '100vh' }
     : { position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)', minHeight: 240 }
+  // No local cursor while controlling (you watch theirs); a pointer when connected to
+  // signal "click to take control"; default otherwise.
+  const videoCursor = controlling ? 'none' : connected ? 'pointer' : 'default'
   const videoStyle = full
-    ? { display: 'block', width: '100vw', height: '100vh', objectFit: 'contain', cursor: controlling ? 'crosshair' : 'default' }
-    : { display: 'block', width: '100%', maxHeight: '60vh', objectFit: 'contain', cursor: controlling ? 'crosshair' : 'default' }
+    ? { display: 'block', width: '100vw', height: '100vh', objectFit: 'contain', cursor: videoCursor }
+    : { display: 'block', width: '100%', maxHeight: '60vh', objectFit: 'contain', cursor: videoCursor }
 
   return (
     <section style={c.panel}>
@@ -208,6 +229,16 @@ export function LivePanel({ device }) {
               : 'Start the live view to see this device’s screen.'}
           </div>
         )}
+        {connected && !controlling && (
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, padding: '10px 12px', background: 'linear-gradient(transparent, rgba(0,0,0,0.55))', color: '#fff', fontSize: 12, textAlign: 'center', pointerEvents: 'none' }}>
+            Click the screen to take control · Esc gives it back
+          </div>
+        )}
+        {controlling && (
+          <div style={{ position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: 12, padding: '4px 10px', borderRadius: 8, pointerEvents: 'none' }}>
+            Controlling — Esc to release
+          </div>
+        )}
         {full && (
           <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '6px 10px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff' }}>
@@ -224,7 +255,7 @@ export function LivePanel({ device }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: connected ? 'pointer' : 'not-allowed', opacity: connected ? 1 : 0.5 }}>
           <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControl(e.target.checked)} />
-          Take control (their cursor snaps to wherever you point on the screen; they can still use theirs too)
+          Take control — their screen, your mouse and keyboard (like GeForce Now). Esc hands control back.
         </label>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           {perf && (
