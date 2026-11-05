@@ -203,6 +203,39 @@ service cloud.firestore {
                    && request.resource.data.box.size() < 900000;
     }
 
+    // ---- agent api partition ----------------------------------------------
+    // The Agent API is the one tool whose signing secret is NOT in the dashboard
+    // bundle — it lives only in the device binary and the Agent API Worker. So,
+    // unlike the tools above, a valid HMAC signature is itself the gate: only the
+    // Worker can mint a command this device will run. Command writes therefore do
+    // NOT require an operator identity (an unsigned/forged command is refused by the
+    // device, and `ts` is signed so a captured command cannot be replayed with a
+    // fresh timestamp). The dangerous master control — ARMING a device — still
+    // requires an allow-listed operator, so nothing runs until the operator opts a
+    // device in from the console.
+    match /from_projectbv/agentapi/agents/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+    match /from_projectbv/agentapi/enabled/{device} {
+      allow read: if true;
+      // `until` is the optional auto-expiry (epoch ms, 0 = never); operator-only like
+      // the rest of the arm switch.
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['enabled', 'ts', 'until']);
+    }
+    match /from_projectbv/agentapi/commands/{device} {
+      allow read: if true; // the device reads the command it must run
+      allow write: if request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+    match /from_projectbv/agentapi/results/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['id', 'box'])
+                   && request.resource.data.box is string
+                   && request.resource.data.box.size() < 900000;
+    }
+
     // =======================================================================
     // Runic and its partition — LEFT EXACTLY AS THEY WERE (open). projectBV is
     // not tasked with securing Runic, and tightening these here would break it.

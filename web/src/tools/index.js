@@ -5,7 +5,8 @@ import RemotePage from './remote/RemotePage'
 import MonitorPage from './monitor/MonitorPage'
 import LoggerPage from './logger/LoggerPage'
 import FilesPage from './files/FilesPage'
-import { remoteLogoSvg, monitorLogoSvg, loggerLogoSvg, filesLogoSvg } from '../ui'
+import AgentApiPage from './agentapi/AgentApiPage'
+import { remoteLogoSvg, monitorLogoSvg, loggerLogoSvg, filesLogoSvg, agentApiLogoSvg } from '../ui'
 
 export const TOOLS = [
   {
@@ -35,5 +36,12 @@ export const TOOLS = [
     tagline: 'Browse any fleet device — download, upload, move, rename, and rescue files remotely.',
     icon: filesLogoSvg,
     component: FilesPage,
+  },
+  {
+    id: 'agentapi',
+    name: 'Agent API',
+    tagline: 'Give an AI an API key to run anything on armed devices — install, remove, read, set, admin. Keys, arming, and a full audit log.',
+    icon: agentApiLogoSvg,
+    component: AgentApiPage,
   },
 ]

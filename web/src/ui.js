@@ -77,6 +77,17 @@ export const filesLogoSvg = (size = 22) => ({
   </svg>`,
 })
 
+// The Agent API tool mark (a key with a circuit node — an AI given a key), used
+// in the Tools list + Agent API page.
+export const agentApiLogoSvg = (size = 22) => ({
+  __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <circle cx="32" cy="40" r="16" fill="none" stroke="#ffd200" stroke-width="7"/>
+    <circle cx="32" cy="40" r="4" fill="#ffd200"/>
+    <path d="M46 44 L84 82" fill="none" stroke="#ffd200" stroke-width="7" stroke-linecap="round"/>
+    <path d="M70 68 L80 58 M78 76 L88 66" fill="none" stroke="#ffd200" stroke-width="7" stroke-linecap="round"/>
+  </svg>`,
+})
+
 // The Monitor tool mark (a gauge dial), used in the Tools list + Monitor page.
 export const monitorLogoSvg = (size = 22) => ({
   __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">

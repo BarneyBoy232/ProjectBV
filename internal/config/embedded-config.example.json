@@ -3,5 +3,6 @@
   "firebaseProjectId": "your-firebase-project-id",
   "firebaseApiKey": "your-firebase-web-apiKey",
   "intervalMinutes": 30,
-  "hostnamePrefix": "projectbv"
+  "hostnamePrefix": "projectbv",
+  "agentApiToken": "REPLACE-ME-must-equal-the-worker-AGENTAPI_TOKEN"
 }

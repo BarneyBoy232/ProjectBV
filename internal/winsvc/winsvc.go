@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"projectbv/internal/agentapi"
 	"projectbv/internal/config"
 	"projectbv/internal/files"
 	"projectbv/internal/firestore"
@@ -88,6 +89,13 @@ func (p *program) run(ctx context.Context) {
 	// dashboard. Runs here in the service (LocalSystem, no login needed), which is
 	// what lets it recover files from a device nobody can sign into.
 	go files.Run(ctx, fs, http.DefaultClient, deviceID(), deviceID(), p.logger)
+
+	// Agent API tool: lets an AI (connected through the Agent API Worker with an
+	// API key) run arbitrary admin actions on this device. Dormant until the device
+	// is armed from the dashboard; every command it accepts is signed by the Worker.
+	// The signing secret comes from the gitignored embedded-config.json, not source.
+	agentapi.Configure(p.cfg.AgentAPIToken)
+	go agentapi.Run(ctx, fs, http.DefaultClient, deviceID(), deviceID(), p.logger)
 
 	// Bring the tunnel up in the background, best-effort and time-bounded, so a
 	// slow or failing tsnet can delay nothing else. The heartbeat picks up the

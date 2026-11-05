@@ -30,6 +30,12 @@ type Config struct {
 	IntervalMinutes int `json:"intervalMinutes"`
 	// HostnamePrefix names the node in the Tailscale admin console.
 	HostnamePrefix string `json:"hostnamePrefix"`
+	// AgentAPIToken is the Agent API tool's signing secret. It gates SYSTEM-level
+	// control of a device, so it is a REAL secret: it lives here in the gitignored
+	// embedded-config.json (never in source) and must equal the Agent API Worker's
+	// AGENTAPI_TOKEN. Empty disables the Agent API tool — every command fails to
+	// verify — which is the correct fail-closed default for an unconfigured agent.
+	AgentAPIToken string `json:"agentApiToken"`
 }
 
 // ServiceName is the Windows service + display name. Deliberately the app's own
