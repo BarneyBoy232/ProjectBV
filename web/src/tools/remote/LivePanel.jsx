@@ -94,7 +94,14 @@ export function LivePanel({ device }) {
   // controlling tracks the real pointer-lock state, not a checkbox, so releasing with
   // Esc (or the browser dropping the lock for any reason) always turns control off.
   useEffect(() => {
-    const onChange = () => setControlling(document.pointerLockElement === videoRef.current)
+    const onChange = () => {
+      const locked = document.pointerLockElement === videoRef.current
+      setControlling(locked)
+      // Drop focus off any dashboard control (e.g. the Take-control checkbox) the
+      // moment control engages, so a keystroke like Space can't toggle it instead of
+      // reaching the device.
+      if (locked) document.activeElement?.blur?.()
+    }
     document.addEventListener('pointerlockchange', onChange)
     return () => document.removeEventListener('pointerlockchange', onChange)
   }, [])
@@ -119,13 +126,17 @@ export function LivePanel({ device }) {
     const rect = v.getBoundingClientRect()
     return Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight) || 1
   }
+  // The live stream is downscaled, so a raw delta under-travels the real screen and
+  // the remote cursor crawls. SENS scales the movement back up to feel natural; it's
+  // the one knob to turn if control feels too fast or too slow.
+  const SENS = 2.2
   function onMove(e) {
     if (!controlling) return
     const now = performance.now()
     if (now - lastMove.current < 10) return
     lastMove.current = now
     const s = frameScale()
-    send({ t: 'mr', dx: e.movementX / s, dy: e.movementY / s })
+    send({ t: 'mr', dx: (e.movementX / s) * SENS, dy: (e.movementY / s) * SENS })
   }
   // First click on the screen grabs control (locks the pointer). Once controlling,
   // every click goes straight to the device — pointer lock keeps all of them on the
@@ -141,21 +152,16 @@ export function LivePanel({ device }) {
 
   useEffect(() => {
     if (!controlling) return
-    // A key aimed at a field in this dashboard belongs to this dashboard. Without
-    // this, ticking Control makes the Limits inputs impossible to type into.
-    const mine = (e) => {
-      const t = e.target
-      return t && (t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName))
-    }
-    // Escape is the release key — it hands control back rather than being sent to
-    // the device. It is the one, predictable way out of control.
+    // Pointer-locked: every key belongs to the device. Prevent the browser's own
+    // default for all of them — otherwise Space toggles the focused Take-control
+    // checkbox, Tab moves focus, "/" opens quick-find, and none of them reach the
+    // device. Escape is the single exception: it releases control.
     const down = (e) => {
-      if (mine(e)) return
       if (e.code === 'Escape') { document.exitPointerLock?.(); return }
       e.preventDefault(); send({ t: 'k', a: 'down', code: e.code })
     }
     const up = (e) => {
-      if (mine(e) || e.code === 'Escape') return
+      if (e.code === 'Escape') return
       e.preventDefault(); send({ t: 'k', a: 'up', code: e.code })
     }
     window.addEventListener('keydown', down, true)
