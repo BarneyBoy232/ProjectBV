@@ -72,8 +72,14 @@ export function startSession(deviceId, { onStream, onState }) {
     })
     .catch((e) => onState('error:' + e.message))
 
+  // Counters so the UI can show whether input is actually leaving: if `dropped`
+  // climbs while you move/type, the data channel isn't open and nothing is reaching
+  // the device — the single likeliest cause of "controls do nothing".
+  let sent = 0
+  let dropped = 0
   function sendInput(evt) {
-    if (channel && channel.readyState === 'open') channel.send(JSON.stringify(evt))
+    if (channel && channel.readyState === 'open') { channel.send(JSON.stringify(evt)); sent++ }
+    else dropped++
   }
   async function stop() {
     unsubs.forEach((fn) => fn())
@@ -84,5 +90,10 @@ export function startSession(deviceId, { onStream, onState }) {
       if (s) await Promise.all(s.docs.map((dd) => deleteDoc(dd.ref).catch(() => {})))
     }
   }
-  return { sendInput, stop, nonce }
+  return {
+    sendInput, stop, nonce,
+    peer: pc,
+    channelState: () => (channel ? channel.readyState : 'none'),
+    io: () => ({ sent, dropped }),
+  }
 }

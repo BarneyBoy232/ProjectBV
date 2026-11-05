@@ -5,11 +5,17 @@ import { startSession } from './session'
 import { loadLimits, saveLimits, clampPct, DEFAULT_LIMITS } from './limits'
 import { c } from '../../ui'
 
+// Bumped on every control change so we can confirm from the live screen which build
+// is actually running — the old-code/new-code confusion has cost us repeatedly.
+const BUILD = 'ctl-diag-1'
+
 export function LivePanel({ device }) {
   const videoRef = useRef(null)
   const stageRef = useRef(null)
   const sessionRef = useRef(null)
   const lastMove = useRef(0)
+  const lastEvt = useRef(null)   // last input we handed to the channel (debug)
+  const [diag, setDiag] = useState(null)
   const [state, setState] = useState('idle')
   const [controlling, setControlling] = useState(false)
   const [perf, setPerf] = useState(null)
@@ -56,6 +62,56 @@ export function LivePanel({ device }) {
     return () => { alive = false; if (h) clearTimeout(h) }
   }, [state, device.id])
 
+  // --- live diagnostics ---------------------------------------------------
+  // Read straight off the peer connection so we can see what the stream and the
+  // input channel are actually doing, instead of guessing.
+  useEffect(() => {
+    if (state !== 'ready' && state !== 'connected') { setDiag(null); return undefined }
+    let alive = true
+    let prevBytes = 0
+    let prevTs = 0
+    const h = setInterval(async () => {
+      const peer = sessionRef.current?.peer
+      if (!alive || !peer) return
+      try {
+        const stats = await peer.getStats()
+        let vid = null
+        let pair = null
+        const cands = {}
+        stats.forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') vid = r
+          if (r.type === 'candidate-pair' && r.nominated) pair = r
+          if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r.candidateType
+        })
+        let kbps = 0
+        if (vid) {
+          const dt = (vid.timestamp - prevTs) / 1000
+          if (prevTs && dt > 0) kbps = Math.round(((vid.bytesReceived - prevBytes) * 8) / 1000 / dt)
+          prevBytes = vid.bytesReceived
+          prevTs = vid.timestamp
+        }
+        const io = sessionRef.current?.io?.() || { sent: 0, dropped: 0 }
+        const le = lastEvt.current
+        setDiag({
+          build: BUILD,
+          chan: sessionRef.current?.channelState?.() || 'none',
+          w: vid?.frameWidth || videoRef.current?.videoWidth || 0,
+          h: vid?.frameHeight || videoRef.current?.videoHeight || 0,
+          fps: Math.round(vid?.framesPerSecond || 0),
+          kbps,
+          lost: vid?.packetsLost ?? 0,
+          jitter: vid ? Math.round((vid.jitter || 0) * 1000) : 0,
+          rtt: pair ? Math.round((pair.currentRoundTripTime || 0) * 1000) : 0,
+          path: pair ? `${cands[pair.localCandidateId] || '?'}/${cands[pair.remoteCandidateId] || '?'}` : '?',
+          sent: io.sent,
+          dropped: io.dropped,
+          last: le ? le.t + (le.code ? ':' + le.code : '') : '—',
+        })
+      } catch { /* stats not ready */ }
+    }, 1000)
+    return () => { alive = false; clearInterval(h) }
+  }, [state])
+
   // --- fullscreen ---------------------------------------------------------
   // The point of this view is to look at somebody's machine as if you were sitting
   // at it. In a panel on a dashboard page you are looking at a postage stamp of a
@@ -94,7 +150,14 @@ export function LivePanel({ device }) {
   // controlling tracks the real pointer-lock state, not a checkbox, so releasing with
   // Esc (or the browser dropping the lock for any reason) always turns control off.
   useEffect(() => {
-    const onChange = () => setControlling(document.pointerLockElement === videoRef.current)
+    const onChange = () => {
+      const locked = document.pointerLockElement === videoRef.current
+      setControlling(locked)
+      // Drop focus off any dashboard control (e.g. the Take-control checkbox) the
+      // moment control engages, so a keystroke like Space can't toggle it instead of
+      // reaching the device.
+      if (locked) document.activeElement?.blur?.()
+    }
     document.addEventListener('pointerlockchange', onChange)
     return () => document.removeEventListener('pointerlockchange', onChange)
   }, [])
@@ -108,7 +171,7 @@ export function LivePanel({ device }) {
     catch { setFrozen(!on) }
   }
 
-  const send = (evt) => sessionRef.current?.sendInput(evt)
+  const send = (evt) => { lastEvt.current = evt; sessionRef.current?.sendInput(evt) }
   // While the pointer is locked, movement arrives as deltas in the <video>'s own CSS
   // pixels. Convert them to captured-frame pixels (the agent then scales those to the
   // device's real screen — see input.js 'mr'). Because deltas accumulate, the whole
@@ -119,13 +182,17 @@ export function LivePanel({ device }) {
     const rect = v.getBoundingClientRect()
     return Math.min(rect.width / v.videoWidth, rect.height / v.videoHeight) || 1
   }
+  // The live stream is downscaled, so a raw delta under-travels the real screen and
+  // the remote cursor crawls. SENS scales the movement back up to feel natural; it's
+  // the one knob to turn if control feels too fast or too slow.
+  const SENS = 2.2
   function onMove(e) {
     if (!controlling) return
     const now = performance.now()
     if (now - lastMove.current < 10) return
     lastMove.current = now
     const s = frameScale()
-    send({ t: 'mr', dx: e.movementX / s, dy: e.movementY / s })
+    send({ t: 'mr', dx: (e.movementX / s) * SENS, dy: (e.movementY / s) * SENS })
   }
   // First click on the screen grabs control (locks the pointer). Once controlling,
   // every click goes straight to the device — pointer lock keeps all of them on the
@@ -141,21 +208,16 @@ export function LivePanel({ device }) {
 
   useEffect(() => {
     if (!controlling) return
-    // A key aimed at a field in this dashboard belongs to this dashboard. Without
-    // this, ticking Control makes the Limits inputs impossible to type into.
-    const mine = (e) => {
-      const t = e.target
-      return t && (t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName))
-    }
-    // Escape is the release key — it hands control back rather than being sent to
-    // the device. It is the one, predictable way out of control.
+    // Pointer-locked: every key belongs to the device. Prevent the browser's own
+    // default for all of them — otherwise Space toggles the focused Take-control
+    // checkbox, Tab moves focus, "/" opens quick-find, and none of them reach the
+    // device. Escape is the single exception: it releases control.
     const down = (e) => {
-      if (mine(e)) return
       if (e.code === 'Escape') { document.exitPointerLock?.(); return }
       e.preventDefault(); send({ t: 'k', a: 'down', code: e.code })
     }
     const up = (e) => {
-      if (mine(e) || e.code === 'Escape') return
+      if (e.code === 'Escape') return
       e.preventDefault(); send({ t: 'k', a: 'up', code: e.code })
     }
     window.addEventListener('keydown', down, true)
@@ -270,6 +332,13 @@ export function LivePanel({ device }) {
       {overLimit && (
         <div style={{ fontSize: 12, color: 'var(--bad)', marginTop: 8 }}>
           Over the limit — {perf.verdict.reason}. The session keeps running; the next one will be refused.
+        </div>
+      )}
+
+      {diag && (
+        <div style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11, color: 'var(--dim)', marginTop: 10, lineHeight: 1.6, wordBreak: 'break-all', borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+          <div>build <strong style={{ color: 'var(--text)' }}>{diag.build}</strong> · channel <strong style={{ color: diag.chan === 'open' ? 'var(--ok)' : 'var(--bad)' }}>{diag.chan}</strong> · input sent {diag.sent} · dropped <strong style={{ color: diag.dropped ? 'var(--bad)' : 'var(--dim)' }}>{diag.dropped}</strong> · last {diag.last}</div>
+          <div>{diag.w}×{diag.h} @ {diag.fps}fps · {diag.kbps} kbps · lost {diag.lost} · jitter {diag.jitter}ms · rtt {diag.rtt}ms · path {diag.path}</div>
         </div>
       )}
 
