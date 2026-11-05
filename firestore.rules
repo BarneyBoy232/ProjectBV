@@ -204,15 +204,13 @@ service cloud.firestore {
     }
 
     // ---- agent api partition ----------------------------------------------
-    // The Agent API is the one tool whose signing secret is NOT in the dashboard
-    // bundle — it lives only in the device binary and the Agent API Worker. So,
-    // unlike the tools above, a valid HMAC signature is itself the gate: only the
-    // Worker can mint a command this device will run. Command writes therefore do
-    // NOT require an operator identity (an unsigned/forged command is refused by the
-    // device, and `ts` is signed so a captured command cannot be replayed with a
-    // fresh timestamp). The dangerous master control — ARMING a device — still
-    // requires an allow-listed operator, so nothing runs until the operator opts a
-    // device in from the console.
+    // The Agent API's signing secret lives only in its Vercel function and the device
+    // agent — never in the dashboard bundle — so a valid HMAC signature is itself the
+    // gate: only the function can mint a command the device will run. Command writes
+    // therefore do NOT require an operator identity (a forged command is refused by the
+    // device, and `ts` is signed so a captured command can't be replayed with a fresh
+    // timestamp). Keys and arming are the operator-only writes; the function reads a key
+    // by its hash to validate it and signs commands, but never writes keys or arming.
     match /from_projectbv/agentapi/agents/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 30;
@@ -234,6 +232,20 @@ service cloud.firestore {
       allow write: if request.resource.data.keys().hasAll(['id', 'box'])
                    && request.resource.data.box is string
                    && request.resource.data.box.size() < 900000;
+    }
+    // Key records: the SHA-256 hash of a key (the doc id) + its scope. Minted, listed
+    // and revoked ONLY by an operator (the dashboard, signed in). The Vercel function
+    // validates a presented key by GETting the one doc whose id is that key's hash —
+    // allowed, because knowing the id means holding the key — but can never LIST them.
+    match /from_projectbv/agentapi/keys/{hash} {
+      allow get: if true;
+      allow list: if isOperator();
+      allow write: if isOperator();
+    }
+    // Audit: the function records what the AI did (it has no identity); operator reads.
+    match /from_projectbv/agentapi/audit/{entry} {
+      allow read: if isOperator();
+      allow create: if request.resource.data.size() < 30;
     }
 
     // =======================================================================

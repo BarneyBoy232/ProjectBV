@@ -1,14 +1,16 @@
-// Agent API's corner of Firestore, dashboard side. NOTE: there is deliberately NO
-// shared secret here. This tool's signing secret lives only in the device binary
-// and the Agent API Worker — never in this bundle — so the dashboard can arm a
-// device and read presence, but it cannot itself sign a command. Minting keys and
-// reading the audit log go through the Worker (see worker.js).
+// Agent API's corner of Firestore, dashboard side. No shared secret here: generating
+// a key only writes a record (the key's hash + its scope) that the Vercel function
+// reads to validate the key. The signing secret lives only in that function and the
+// device agent, never in this bundle.
 
 export const ROOT = ['from_projectbv', 'agentapi']
 export const PATHS = {
   agents: () => [...ROOT, 'agents'],
   enabled: (id) => [...ROOT, 'enabled', id],
   enabledAll: () => [...ROOT, 'enabled'],
+  keys: () => [...ROOT, 'keys'],
+  key: (hash) => [...ROOT, 'keys', hash],
+  audit: () => [...ROOT, 'audit'],
 }
 
 export const FLEET_DEVICES = ['from_projectbv', 'fleet', 'devices']

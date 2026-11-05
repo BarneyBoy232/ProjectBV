@@ -40,7 +40,7 @@ export const TOOLS = [
   {
     id: 'agentapi',
     name: 'Agent API',
-    tagline: 'Give an AI an API key to run anything on armed devices — install, remove, read, set, admin. Keys, arming, and a full audit log.',
+    tagline: 'Generate a key, give it to Claude, and it runs anything on your devices — install, remove, read, set, full admin.',
     icon: agentApiLogoSvg,
     component: AgentApiPage,
   },
