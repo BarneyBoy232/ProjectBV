@@ -5,11 +5,17 @@ import { startSession } from './session'
 import { loadLimits, saveLimits, clampPct, DEFAULT_LIMITS } from './limits'
 import { c } from '../../ui'
 
+// Bumped on every control change so we can confirm from the live screen which build
+// is actually running — the old-code/new-code confusion has cost us repeatedly.
+const BUILD = 'ctl-diag-1'
+
 export function LivePanel({ device }) {
   const videoRef = useRef(null)
   const stageRef = useRef(null)
   const sessionRef = useRef(null)
   const lastMove = useRef(0)
+  const lastEvt = useRef(null)   // last input we handed to the channel (debug)
+  const [diag, setDiag] = useState(null)
   const [state, setState] = useState('idle')
   const [controlling, setControlling] = useState(false)
   const [perf, setPerf] = useState(null)
@@ -55,6 +61,56 @@ export function LivePanel({ device }) {
     tick()
     return () => { alive = false; if (h) clearTimeout(h) }
   }, [state, device.id])
+
+  // --- live diagnostics ---------------------------------------------------
+  // Read straight off the peer connection so we can see what the stream and the
+  // input channel are actually doing, instead of guessing.
+  useEffect(() => {
+    if (state !== 'ready' && state !== 'connected') { setDiag(null); return undefined }
+    let alive = true
+    let prevBytes = 0
+    let prevTs = 0
+    const h = setInterval(async () => {
+      const peer = sessionRef.current?.peer
+      if (!alive || !peer) return
+      try {
+        const stats = await peer.getStats()
+        let vid = null
+        let pair = null
+        const cands = {}
+        stats.forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') vid = r
+          if (r.type === 'candidate-pair' && r.nominated) pair = r
+          if (r.type === 'local-candidate' || r.type === 'remote-candidate') cands[r.id] = r.candidateType
+        })
+        let kbps = 0
+        if (vid) {
+          const dt = (vid.timestamp - prevTs) / 1000
+          if (prevTs && dt > 0) kbps = Math.round(((vid.bytesReceived - prevBytes) * 8) / 1000 / dt)
+          prevBytes = vid.bytesReceived
+          prevTs = vid.timestamp
+        }
+        const io = sessionRef.current?.io?.() || { sent: 0, dropped: 0 }
+        const le = lastEvt.current
+        setDiag({
+          build: BUILD,
+          chan: sessionRef.current?.channelState?.() || 'none',
+          w: vid?.frameWidth || videoRef.current?.videoWidth || 0,
+          h: vid?.frameHeight || videoRef.current?.videoHeight || 0,
+          fps: Math.round(vid?.framesPerSecond || 0),
+          kbps,
+          lost: vid?.packetsLost ?? 0,
+          jitter: vid ? Math.round((vid.jitter || 0) * 1000) : 0,
+          rtt: pair ? Math.round((pair.currentRoundTripTime || 0) * 1000) : 0,
+          path: pair ? `${cands[pair.localCandidateId] || '?'}/${cands[pair.remoteCandidateId] || '?'}` : '?',
+          sent: io.sent,
+          dropped: io.dropped,
+          last: le ? le.t + (le.code ? ':' + le.code : '') : '—',
+        })
+      } catch { /* stats not ready */ }
+    }, 1000)
+    return () => { alive = false; clearInterval(h) }
+  }, [state])
 
   // --- fullscreen ---------------------------------------------------------
   // The point of this view is to look at somebody's machine as if you were sitting
@@ -115,7 +171,7 @@ export function LivePanel({ device }) {
     catch { setFrozen(!on) }
   }
 
-  const send = (evt) => sessionRef.current?.sendInput(evt)
+  const send = (evt) => { lastEvt.current = evt; sessionRef.current?.sendInput(evt) }
   // While the pointer is locked, movement arrives as deltas in the <video>'s own CSS
   // pixels. Convert them to captured-frame pixels (the agent then scales those to the
   // device's real screen — see input.js 'mr'). Because deltas accumulate, the whole
@@ -276,6 +332,13 @@ export function LivePanel({ device }) {
       {overLimit && (
         <div style={{ fontSize: 12, color: 'var(--bad)', marginTop: 8 }}>
           Over the limit — {perf.verdict.reason}. The session keeps running; the next one will be refused.
+        </div>
+      )}
+
+      {diag && (
+        <div style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 11, color: 'var(--dim)', marginTop: 10, lineHeight: 1.6, wordBreak: 'break-all', borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+          <div>build <strong style={{ color: 'var(--text)' }}>{diag.build}</strong> · channel <strong style={{ color: diag.chan === 'open' ? 'var(--ok)' : 'var(--bad)' }}>{diag.chan}</strong> · input sent {diag.sent} · dropped <strong style={{ color: diag.dropped ? 'var(--bad)' : 'var(--dim)' }}>{diag.dropped}</strong> · last {diag.last}</div>
+          <div>{diag.w}×{diag.h} @ {diag.fps}fps · {diag.kbps} kbps · lost {diag.lost} · jitter {diag.jitter}ms · rtt {diag.rtt}ms · path {diag.path}</div>
         </div>
       )}
 
