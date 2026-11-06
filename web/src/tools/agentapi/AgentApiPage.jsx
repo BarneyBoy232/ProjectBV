@@ -114,8 +114,20 @@ function KeysPanel({ devices, allIds }) {
       {err && <div style={{ color: 'var(--bad)', fontSize: 13, margin: '8px 0' }}>{err}</div>}
       {minted && <Minted minted={minted} onDismiss={() => setMinted(null)} />}
 
-      {/* presets */}
-      <div style={{ display: 'grid', gap: 12, marginTop: 12, padding: 14, border: '1px solid var(--line)', borderRadius: 10 }}>
+      {/* one button is the whole flow; the key already covers every device, so there is nothing to link */}
+      <div style={{ marginTop: 12 }}>
+        <button style={{ ...c.primary, fontSize: 15, padding: '11px 20px' }} disabled={busy || (scope === 'pick' && picked.size === 0)} onClick={doGenerate}>
+          {busy ? 'Generating…' : 'Generate key'}
+        </button>
+        <div style={{ fontSize: 12, color: 'var(--dim)', marginTop: 8, lineHeight: 1.5 }}>
+          Covers every device, full admin, never expires. Paste it into Claude and that's it — there's nothing to link. Open <b>Options</b> only if you want to narrow it.
+        </div>
+      </div>
+
+      {/* optional: narrow the key (defaults already give full access to everything) */}
+      <details style={{ marginTop: 12 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 13, color: 'var(--accent)' }}>Options</summary>
+        <div style={{ display: 'grid', gap: 12, marginTop: 10, padding: 14, border: '1px solid var(--line)', borderRadius: 10 }}>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ flex: '1 1 160px' }}>
             <label style={c.label}>Label</label>
@@ -156,12 +168,8 @@ function KeysPanel({ devices, allIds }) {
             </div>
           )}
         </div>
-        <div>
-          <button style={c.primary} disabled={busy || (scope === 'pick' && picked.size === 0)} onClick={doGenerate}>
-            {busy ? 'Generating…' : 'Generate key'}
-          </button>
         </div>
-      </div>
+      </details>
 
       {/* existing keys */}
       {keys.length > 0 && (
