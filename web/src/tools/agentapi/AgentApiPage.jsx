@@ -11,8 +11,39 @@ export default function AgentApiPage() {
   const allIds = devices.map((d) => d.id)
   return (
     <div style={{ maxWidth: 760 }}>
+      <SetupPanel devices={devices} />
       <KeysPanel devices={devices} allIds={allIds} />
       <AuditPanel />
+    </div>
+  )
+}
+
+function SetupPanel({ devices }) {
+  const [backend, setBackend] = useState('checking…')
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    fetch('/api/agent').then((r) => r.json()).then((j) => setBackend(j && j.ok ? 'live' : 'down')).catch(() => setBackend('down'))
+  }, [])
+  const ready = devices.filter((d) => d.hasAgent && d.agentOnline)
+  const notReady = devices.filter((d) => !d.hasAgent)
+  return (
+    <div style={c.panel}>
+      <h2 style={c.h2}>Setup</h2>
+      <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', marginTop: 8, fontSize: 13 }}>
+        <span><span style={c.dot(backend === 'live')} />Backend {backend}</span>
+        <span><span style={c.dot(ready.length > 0)} />{ready.length} of {devices.length} device{devices.length === 1 ? '' : 's'} ready</span>
+      </div>
+      {notReady.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--dim)', marginTop: 8 }}>
+          Needs the updated agent: {notReady.map((d) => d.name).join(', ')} — push the agent update on the Deploy page, then they show here on their next check-in.
+        </div>
+      )}
+      <details style={{ marginTop: 10 }} open={open} onToggle={(e) => setOpen(e.target.open)}>
+        <summary style={{ cursor: 'pointer', fontSize: 13, color: 'var(--accent)' }}>How this works</summary>
+        <div style={{ fontSize: 13, color: 'var(--dim)', marginTop: 8, lineHeight: 1.6 }}>
+          Generate a key below and give it to Claude Code as a custom connector. Claude calls this site's backend with the key; the backend checks the key and relays the command to the device's agent, which runs it as administrator. A device becomes “ready” once it's running the updated agent — push that from the Deploy page. The only safety control is <b>Cut everything off</b>, which revokes every key at once.
+        </div>
+      </details>
     </div>
   )
 }
