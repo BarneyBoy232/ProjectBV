@@ -48,6 +48,18 @@ service cloud.firestore {
     // Anyone allowed to operate the console: the root admin, or a listed member.
     function isOperator() { return isRoot() || isMember(); }
 
+    // ---- the lock (second layer, independent of identity) -----------------
+    // A LOCKED device is tamper-proof: no command, session, or control toggle can
+    // be written to it — by anyone, including an allow-listed operator, including
+    // by accident. It still checks in and still shows in the fleet ("linked but
+    // untouchable"). Unlocking is itself an operator action, so you must deliberately
+    // unlock before you can touch it again. Default (no lock doc) = unlocked.
+    function locked(device) {
+      return exists(/databases/$(database)/documents/from_projectbv/fleet/locks/$(device))
+        && get(/databases/$(database)/documents/from_projectbv/fleet/locks/$(device)).data.locked == true;
+    }
+    function unlocked(device) { return !locked(device); }
+
     // =======================================================================
     // projectBV — the fleet console partition
     // =======================================================================
@@ -85,6 +97,16 @@ service cloud.firestore {
       allow delete: if isOperator();
     }
 
+    // The lock switch. Operator-only to set/clear; the device (and dashboard) read
+    // it. Toggling the lock is deliberately NOT blocked by the lock itself, so an
+    // operator can always unlock.
+    match /from_projectbv/fleet/locks/{device} {
+      allow read: if true;
+      allow write: if isOperator()
+                   && request.resource.data.keys().hasOnly(['locked', 'ts']);
+      allow delete: if isOperator();
+    }
+
     // ---- remote control ---------------------------------------------------
     // Presence + results are written by the device agent (unauthenticated).
     match /from_projectbv/remotedesk/agents/{device} {
@@ -100,12 +122,12 @@ service cloud.firestore {
     // kingdom. Operator identity required.
     match /from_projectbv/remotedesk/enabled/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasOnly(['enabled', 'ts']);
     }
     match /from_projectbv/remotedesk/commands/{device} {
       allow read: if true; // the device reads the command it must run
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
                    && request.resource.data.sig is string;
     }
@@ -133,18 +155,18 @@ service cloud.firestore {
     }
     match /from_projectbv/monitor/enabled/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasOnly(['enabled', 'ts']);
     }
     match /from_projectbv/monitor/commands/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
                    && request.resource.data.sig is string;
     }
     match /from_projectbv/monitor/watch/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasAll(['nonce', 'until', 'sig']);
       allow delete: if isOperator();
     }
@@ -167,12 +189,12 @@ service cloud.firestore {
     }
     match /from_projectbv/logger/enabled/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasOnly(['enabled', 'ts']);
     }
     match /from_projectbv/logger/commands/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
                    && request.resource.data.sig is string;
     }
@@ -187,12 +209,12 @@ service cloud.firestore {
     }
     match /from_projectbv/files/enabled/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasOnly(['enabled', 'ts']);
     }
     match /from_projectbv/files/commands/{device} {
       allow read: if true;
-      allow write: if isOperator()
+      allow write: if isOperator() && unlocked(device)
                    && request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
                    && request.resource.data.sig is string;
     }
@@ -204,13 +226,15 @@ service cloud.firestore {
     }
 
     // ---- agent api partition ----------------------------------------------
-    // The Agent API's signing secret lives only in its Vercel function and the device
-    // agent — never in the dashboard bundle — so a valid HMAC signature is itself the
-    // gate: only the function can mint a command the device will run. Command writes
-    // therefore do NOT require an operator identity (a forged command is refused by the
-    // device, and `ts` is signed so a captured command can't be replayed with a fresh
-    // timestamp). Keys and arming are the operator-only writes; the function reads a key
-    // by its hash to validate it and signs commands, but never writes keys or arming.
+    // The Agent API is the one tool whose signing secret is NOT in the dashboard
+    // bundle — it lives only in the device binary and the Agent API Worker. So,
+    // unlike the tools above, a valid HMAC signature is itself the gate: only the
+    // Worker can mint a command this device will run. Command writes therefore do
+    // NOT require an operator identity (an unsigned/forged command is refused by the
+    // device, and `ts` is signed so a captured command cannot be replayed with a
+    // fresh timestamp). The dangerous master control — ARMING a device — still
+    // requires an allow-listed operator, so nothing runs until the operator opts a
+    // device in from the console.
     match /from_projectbv/agentapi/agents/{device} {
       allow read: if true;
       allow write: if request.resource.data.size() < 30;
@@ -232,20 +256,6 @@ service cloud.firestore {
       allow write: if request.resource.data.keys().hasAll(['id', 'box'])
                    && request.resource.data.box is string
                    && request.resource.data.box.size() < 900000;
-    }
-    // Key records: the SHA-256 hash of a key (the doc id) + its scope. Minted, listed
-    // and revoked ONLY by an operator (the dashboard, signed in). The Vercel function
-    // validates a presented key by GETting the one doc whose id is that key's hash —
-    // allowed, because knowing the id means holding the key — but can never LIST them.
-    match /from_projectbv/agentapi/keys/{hash} {
-      allow get: if true;
-      allow list: if isOperator();
-      allow write: if isOperator();
-    }
-    // Audit: the function records what the AI did (it has no identity); operator reads.
-    match /from_projectbv/agentapi/audit/{entry} {
-      allow read: if isOperator();
-      allow create: if request.resource.data.size() < 30;
     }
 
     // =======================================================================

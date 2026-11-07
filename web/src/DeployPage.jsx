@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, setDeviceLabel, removeDevice, AGENT_NAME } from './api'
+import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, setDeviceLabel, removeDevice, setDeviceLock, AGENT_NAME } from './api'
 import { c, ago } from './ui'
 import agentBuild from './agent-build.json'
 
@@ -95,6 +95,14 @@ export default function DeployPage() {
     refresh()
   }
 
+  async function onToggleLock(d) {
+    const label = d.display || d.name || d.id
+    const next = !d.locked
+    if (next && !confirm(`Lock "${label}"? Nothing — no command, session or deploy control — can touch it until you unlock it, not even by accident.`)) return
+    await setDeviceLock(d.id, next).catch((e) => setMsg({ ok: false, text: e.message }))
+    refresh()
+  }
+
   const now = Date.now()
   return (
     <>
@@ -123,6 +131,12 @@ export default function DeployPage() {
                           {d.display || d.name}
                         </span>
                       )}
+                      {d.locked && (
+                        <span title="Locked — tamper-proof. Nothing can touch this device until you unlock it."
+                          style={{ marginLeft: 8, fontSize: 11, fontWeight: 600, color: '#ffd200', border: '1px solid #4a4420', background: '#201d0a', borderRadius: 6, padding: '2px 7px' }}>
+                          🔒 Locked
+                        </span>
+                      )}
                     </td>
                     <td style={c.td}>{d.version || '—'}</td>
                     <td style={c.td}>
@@ -130,10 +144,15 @@ export default function DeployPage() {
                       {online ? 'online' : 'offline'}
                       {!online && <span style={{ color: 'var(--dim)' }}> · last seen {ago(d.lastSeen)}</span>}
                       <UpdateOutcome device={d} />
+                      <button onClick={() => onToggleLock(d)}
+                        title={d.locked ? 'Unlock this device so it can be controlled again.' : 'Lock this device: nothing can touch it until you unlock it.'}
+                        style={{ marginLeft: 12, background: d.locked ? '#201d0a' : 'none', border: `1px solid ${d.locked ? '#4a4420' : 'var(--line)'}`, color: d.locked ? '#ffd200' : 'var(--dim)', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', fontSize: 12 }}>
+                        {d.locked ? 'Unlock' : 'Lock'}
+                      </button>
                       {!online && (
                         <button onClick={() => onRemoveDevice(d)}
                           title="Remove this device from the list. A live agent reappears on its next check-in."
-                          style={{ marginLeft: 12, background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', fontSize: 12 }}>
+                          style={{ marginLeft: 8, background: 'none', border: '1px solid var(--line)', color: 'var(--dim)', borderRadius: 7, padding: '3px 9px', cursor: 'pointer', fontSize: 12 }}>
                           Remove
                         </button>
                       )}

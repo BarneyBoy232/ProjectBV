@@ -15,6 +15,11 @@ const devicesCol = collection(db, 'from_projectbv', 'fleet', 'devices')
 // it wholesale — anything the dashboard wrote there would be gone inside a minute.
 // Keeping labels separate also means renaming needs no agent change at all.
 const labelsCol = collection(db, 'from_projectbv', 'fleet', 'labels')
+// The lock switch — the second security layer. A locked device is tamper-proof:
+// the Firestore rules refuse every control write aimed at it (command, session,
+// enable toggle, across every tool) for everyone, including an operator, including
+// by accident. It still checks in, so it stays visible — "linked but untouchable".
+const locksCol = collection(db, 'from_projectbv', 'fleet', 'locks')
 
 // SHA-256 of a file, computed in the browser (matches what the agent verifies).
 async function sha256hex(file) {
@@ -34,12 +39,19 @@ export async function listManifest() {
 // Devices carry their document id: that id is the device's name in a manifest
 // entry's `targets`, so anything aiming an install at one machine needs it.
 export async function listDevices() {
-  const [snap, labels] = await Promise.all([getDocs(devicesCol), getDocs(labelsCol)])
-  const byId = new Map(labels.docs.map((d) => [d.id, (d.data() || {}).label || '']))
+  const [snap, labels, locks] = await Promise.all([getDocs(devicesCol), getDocs(labelsCol), getDocs(locksCol)])
+  const nameById = new Map(labels.docs.map((d) => [d.id, (d.data() || {}).label || '']))
+  const lockById = new Map(locks.docs.map((d) => [d.id, (d.data() || {}).locked === true]))
   return snap.docs.map((d) => {
-    const label = byId.get(d.id) || ''
-    return { id: d.id, ...d.data(), label, display: label || d.data().name || d.id }
+    const label = nameById.get(d.id) || ''
+    return { id: d.id, ...d.data(), label, display: label || d.data().name || d.id, locked: lockById.get(d.id) === true }
   })
+}
+
+// Lock or unlock a device. Operator-only (rules enforce it). Locking it makes the
+// rules refuse every control write to it until it is deliberately unlocked.
+export async function setDeviceLock(deviceId, locked) {
+  return setDoc(doc(locksCol, deviceId), { locked: !!locked, ts: Date.now() })
 }
 
 // Rename a device for the dashboard's benefit. An empty label clears it and the
@@ -180,5 +192,6 @@ export async function removeDevice(deviceId) {
   await Promise.all([
     deleteDoc(doc(devicesCol, deviceId)).catch(() => {}),
     deleteDoc(doc(labelsCol, deviceId)).catch(() => {}),
+    deleteDoc(doc(locksCol, deviceId)).catch(() => {}),
   ])
 }
