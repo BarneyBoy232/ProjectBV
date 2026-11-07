@@ -43,7 +43,7 @@ type Config struct {
 const ServiceName = "projectBV"
 
 // Version is the agent's own version, shown in Programs & Features.
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 // Load parses the embedded config and fills in sensible defaults.
 func Load() (Config, error) {
