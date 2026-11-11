@@ -23,6 +23,18 @@ function FilePicker({ file, onPick, accept }) {
   )
 }
 
+// Entries that are a tool's device agent show the tool's name, not the
+// installer's internal name. The manifest name itself must not change: every
+// device records what it has installed under that name, so renaming it would
+// make the whole fleet install it again.
+const TOOL_AGENT_NAMES = {
+  projectbv: 'Fleet agent (projectBV)',
+  bvremoteagent: 'Remote tools (Remote · Task Manager · Logger)',
+}
+function displayName(entry) {
+  return TOOL_AGENT_NAMES[String(entry.name || '').toLowerCase()] || entry.name
+}
+
 export default function DeployPage() {
   const [devices, setDevices] = useState([])
   const [manifest, setManifest] = useState([])
@@ -75,7 +87,7 @@ export default function DeployPage() {
       if (!confirm(`Push the fleet agent (${agentBuild.version}) to ${where}? Each restarts its agent as it updates.`)) return
     } else if (!name || !version) {
       setMsg({ ok: false, text: 'Name and version are required.' }); return
-    } else if (!dest) {
+    } else if (kind === 'file' && !dest) {
       setMsg({ ok: false, text: 'A file needs a destination path.' }); return
     }
     setBusy(true); setMsg({ ok: true, text: 'Uploading…' })
@@ -83,7 +95,7 @@ export default function DeployPage() {
       if (agentMode) {
         await deployAgentUpdate({ version: agentBuild.version, file, targets: target ? [target] : [], publishedUrl })
       } else if (kind === 'app') {
-        await deployApp({ name, version, file, scope, silentArgs: silent.split(',').map((s) => s.trim()).filter(Boolean) })
+        await deployApp({ name, version, file, scope, silentArgs: silent.split(',').map((s) => s.trim()).filter(Boolean), targets: target ? [target] : [] })
       } else {
         await deployFile({ name, version, file, dest, targets: target ? [target] : [] })
       }
@@ -102,8 +114,18 @@ export default function DeployPage() {
   async function onRemove(entry) {
     const what = entry.targets && entry.targets.length ? `${entry.name} on ${entry.targets.join(', ')}` : entry.name
     if (!confirm(`Remove "${what}"? (already-installed devices keep it)`)) return
-    await removeEntry(entry.id)
+    try {
+      await removeEntry(entry.id)
+      setManifest((m) => m.filter((x) => x.id !== entry.id))
+    } catch (err) {
+      setMsg({ ok: false, text: `Couldn't remove ${what}: ${err.message}` })
+    }
     refresh()
+  }
+
+  const deviceLabel = (id) => {
+    const d = devices.find((x) => x.id === id)
+    return d ? d.display || d.name || id : id
   }
 
   async function onRemoveDevice(d) {
@@ -205,7 +227,13 @@ export default function DeployPage() {
                 <FilePicker file={file} onPick={setFile} />
                 <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
                 <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
-                <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
+                <div><label style={c.label}>Push to</label>
+                  <select style={c.input} value={target} onChange={(e) => setTarget(e.target.value)}>
+                    <option value="">every device</option>
+                    {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.display || d.name} only</option>)}
+                  </select>
+                </div>
+                <div><label style={c.label}>Silent install args (optional)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
                 <div style={{ gridColumn: '1/-1' }}>
                   <label style={c.label}>Install as</label>
                   <select style={c.input} value={scope} onChange={(e) => setScope(e.target.value)}>
@@ -261,13 +289,13 @@ export default function DeployPage() {
               {manifest.map((a) => (
                 <tr key={a.id}>
                   <td style={{ ...c.td, fontWeight: 600 }}>
-                    {a.name}
+                    {displayName(a)}
                     <div style={{ fontSize: 11, color: 'var(--dim)', fontWeight: 400, marginTop: 2 }}>
-                      {a.targets && a.targets.length ? `only: ${a.targets.join(', ')}` : 'every device'}
+                      {a.targets && a.targets.length ? `only: ${a.targets.map((t) => deviceLabel(t)).join(', ')}` : 'every device'}
                     </div>
                   </td>
                   <td style={c.td}>{a.version}</td>
-                  <td style={c.td}>{a.type || 'app'}</td>
+                  <td style={c.td}>{a.type === 'file' ? 'file' : 'installer'}</td>
                   <td style={c.td}>{a.type === 'file' ? a.dest : (a.silentArgs || []).join(' ') || '—'}</td>
                   <td style={{ ...c.td, textAlign: 'right' }}>
                     <button onClick={() => onRemove(a)} style={{ background: 'none', border: '1px solid var(--line)', color: '#ff5c5c', borderRadius: 7, padding: '5px 10px', cursor: 'pointer', fontSize: 12 }}>Remove</button>

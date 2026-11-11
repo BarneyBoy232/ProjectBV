@@ -74,10 +74,14 @@ service cloud.firestore {
     // ---- deploy: what to install, and which devices are alive -------------
     match /from_projectbv/fleet/manifest/{entry} {
       allow read: if true; // agents must read it unauthenticated
-      allow write: if isOperator()
+      allow create, update: if isOperator()
                    && request.resource.data.keys().hasAll(['name', 'version', 'type'])
                    && request.resource.data.name is string
                    && request.resource.data.name.size() < 200;
+      // Removing a deployment. A plain `allow write` with data checks can never
+      // pass for a delete (there is no incoming data), which silently refused
+      // every Remove.
+      allow delete: if isOperator();
     }
 
     // Written by the agent's own heartbeat — no identity to check. Only an

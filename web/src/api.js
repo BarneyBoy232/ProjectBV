@@ -95,15 +95,24 @@ function refuseAgentName(name) {
 // a machine-wide .msi needs. 'user' runs it as whoever is signed in, in their
 // session — needed by per-user installers, and the only way one installs on a
 // standard account without asking for an admin password.
-export async function deployApp({ name, version, file, silentArgs, scope }) {
+export async function deployApp({ name, version, file, silentArgs, scope, targets }) {
   refuseAgentName(name)
   const sha256 = await sha256hex(file)
   const url = await upload('apps', name, version, sha256, file)
-  await setDoc(doc(manifestCol, name), {
+  const entry = {
     name, version, type: 'app', url, sha256,
     silentArgs: silentArgs || [],
     scope: scope === 'user' ? 'user' : 'machine',
-  })
+  }
+  // Same targeting as files and the agent: empty = every device; a named device
+  // gets its own document so it sits alongside a fleet-wide entry.
+  const named = (targets || []).filter(Boolean)
+  if (named.length === 0) {
+    await setDoc(doc(manifestCol, name), entry)
+    return
+  }
+  await Promise.all(named.map((id) =>
+    setDoc(doc(manifestCol, `${name}--${id}`), { ...entry, targets: [id] })))
 }
 
 // The fleet agent updating itself. The entry is named after the agent's own
