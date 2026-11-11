@@ -5,7 +5,8 @@ import { listDevices, listManifest, AGENT_NAME } from './api'
 import { TOOLS } from './tools'
 import { trefoilSvg, c } from './ui'
 import Gate, { useAccess } from './Gate'
-import { signOutUser } from './firebase'
+import { signOutUser, auth, db } from './firebase'
+import { collection, getDocs } from 'firebase/firestore'
 
 // The console sits inside the Gate: it only ever renders for a verified,
 // allow-listed operator, and the Firestore rules enforce that same allow-list on
@@ -46,12 +47,42 @@ function Console() {
         </div>
       </header>
       <StrandedDevices />
+      <AuthDebug />
       <main style={{ maxWidth: isTools ? 1120 : 920, margin: '0 auto', padding: 24 }}>
         {view.kind === 'deploy' && <DeployPage />}
         {view.kind === 'tools' && <ToolsLanding onOpen={(id) => setView({ kind: 'tool', id })} />}
         {view.kind === 'tool' && <ToolView id={view.id} onBack={() => setView({ kind: 'tools' })} />}
         {view.kind === 'access' && (isAdmin ? <AccessPage /> : <div style={c.empty}>Admins only.</div>)}
       </main>
+    </div>
+  )
+}
+
+// TEMPORARY diagnostic: prints the exact claims this browser's token presents to
+// Firebase, plus whether an operator-gated read passes — so a permission failure can
+// be read instead of guessed. Remove once the access issue is resolved.
+function AuthDebug() {
+  const [info, setInfo] = useState('auth check: running…')
+  useEffect(() => {
+    (async () => {
+      const u = auth.currentUser
+      if (!u) { setInfo('auth check: NO signed-in user on the Firebase client'); return }
+      let claimsLine
+      try {
+        const r = await u.getIdTokenResult(true)
+        claimsLine = `token.email=${r.claims.email} | token.email_verified=${String(r.claims.email_verified)}`
+      } catch (e) { claimsLine = 'token read error: ' + (e.code || e.message) }
+      let opLine
+      try {
+        await getDocs(collection(db, 'from_projectbv', 'access', 'members'))
+        opLine = 'operator check: PASS'
+      } catch (e) { opLine = 'operator check: FAIL — ' + (e.code || e.message) }
+      setInfo(`client.email=${u.email} | client.emailVerified=${String(u.emailVerified)} | ${claimsLine} | ${opLine}`)
+    })()
+  }, [])
+  return (
+    <div style={{ fontSize: 11, fontFamily: 'monospace', color: '#ffd24a', background: '#2a2410', padding: '6px 24px', borderBottom: '1px solid #5a4a10', wordBreak: 'break-all' }}>
+      🔎 {info}
     </div>
   )
 }
