@@ -5,6 +5,24 @@ import agentBuild from './agent-build.json'
 
 const ONLINE_MS = 3 * 60 * 1000
 
+// A themed file picker: the native input is ugly and unthemed, so it's hidden
+// behind a styled button (matching the site's buttons) with the chosen filename
+// shown beside it. Used in both modes, in the same spot, so it never moves.
+function FilePicker({ file, onPick, accept }) {
+  return (
+    <div style={{ gridColumn: '1/-1' }}>
+      <label style={c.label}>File</label>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <span style={{ ...c.ghost, display: 'inline-block', fontSize: 14, whiteSpace: 'nowrap' }}>Choose file…</span>
+        <span style={{ fontSize: 13, color: file ? 'var(--text)' : 'var(--dim)', overflowWrap: 'anywhere' }}>
+          {file ? file.name : 'No file selected'}
+        </span>
+        <input type="file" accept={accept} onChange={(e) => onPick(e.target.files[0])} style={{ display: 'none' }} />
+      </label>
+    </div>
+  )
+}
+
 export default function DeployPage() {
   const [devices, setDevices] = useState([])
   const [manifest, setManifest] = useState([])
@@ -184,6 +202,7 @@ export default function DeployPage() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {kind === 'app' ? (
               <>
+                <FilePicker file={file} onPick={setFile} />
                 <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
                 <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
                 <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
@@ -194,17 +213,10 @@ export default function DeployPage() {
                     <option value="user">the signed-in user (no admin; waits for someone to sign in)</option>
                   </select>
                 </div>
-                <div style={{ gridColumn: '1/-1' }}>
-                  <label style={c.label}>File</label>
-                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
-                </div>
               </>
             ) : (
               <>
-                <div style={{ gridColumn: '1/-1' }}>
-                  <label style={c.label}>File</label>
-                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
-                </div>
+                <FilePicker file={file} onPick={setFile} />
                 {!agentMode && (
                   <>
                     <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
