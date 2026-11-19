@@ -8,7 +8,7 @@ of apps up to date from a JSON manifest you control.
 ## What it does
 
 1. **USB install.** `projectBV-key.exe` (nuclear-trefoil icon) copies the agent
-   into `C:\ProgramData\projectBVgent` (hidden, admin-only), registers it as an always-on Windows
+   into `C:\ProgramData\projectBV\agent` (hidden, admin-only), registers it as an always-on Windows
    service, and adds a Programs & Features entry. Silent (no window).
 2. **Embedded Tailscale.** The agent runs a headless `tsnet` node that joins your
    tailnet automatically using a baked-in auth key. No separate install/UI/login.
