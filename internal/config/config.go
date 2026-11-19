@@ -43,7 +43,7 @@ type Config struct {
 const ServiceName = "projectBV"
 
 // Version is the agent's own version, shown in Programs & Features.
-const Version = "1.2.0"
+const Version = "1.3.0"
 
 // Load parses the embedded config and fills in sensible defaults.
 func Load() (Config, error) {
@@ -60,14 +60,33 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// InstallDir is the machine-wide program folder the agent is copied into,
-// e.g. C:\Program Files\projectBV.
+// InstallDir is the machine-wide program folder the agent is copied into:
+// C:\ProgramData\projectBV\agent. ProgramData is hidden, so the agent adds
+// nothing to Program Files. The folder is locked to SYSTEM and Administrators
+// (winutil.LockInstallDir) because a standard user could otherwise write into
+// ProgramData and replace a binary the service runs as SYSTEM.
 func InstallDir() string {
+	base := os.Getenv("ProgramData")
+	if base == "" {
+		base = `C:\ProgramData`
+	}
+	return filepath.Join(base, "projectBV", "agent")
+}
+
+// LegacyInstallDir is where agents before 1.3.0 lived (C:\Program Files\projectBV).
+// An update moves the agent out of it and deletes it; uninstall and the file
+// guards still know about it for devices that have not updated yet.
+func LegacyInstallDir() string {
 	base := os.Getenv("ProgramFiles")
 	if base == "" {
 		base = `C:\Program Files`
 	}
 	return filepath.Join(base, "projectBV")
+}
+
+// LegacyAgentExePath is the pre-1.3.0 machine-wide agent binary.
+func LegacyAgentExePath() string {
+	return filepath.Join(LegacyInstallDir(), "projectBV.exe")
 }
 
 // DataDir is where runtime state lives (tsnet state, update state, log).

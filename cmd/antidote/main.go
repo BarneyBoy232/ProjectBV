@@ -22,7 +22,7 @@ func main() {
 
 	// A machine-wide install (service + Program Files) needs admin to remove; a
 	// per-user install doesn't. Only elevate if there's a machine install present.
-	machineInstalled := fileExists(config.AgentExePath())
+	machineInstalled := fileExists(config.AgentExePath()) || fileExists(config.LegacyAgentExePath())
 	if machineInstalled && !winutil.IsAdmin() {
 		if err := winutil.RelaunchElevated(os.Args[1:]); err != nil {
 			logger.Printf("antidote: could not elevate: %v", err)
@@ -36,6 +36,7 @@ func main() {
 	_ = winsvc.Control(logger, "uninstall")
 	_ = winutil.RemoveUninstallEntry()
 	_ = os.RemoveAll(config.InstallDir())
+	_ = os.RemoveAll(config.LegacyInstallDir())
 
 	// Per-user artifacts.
 	_ = winutil.RemoveRunKey()

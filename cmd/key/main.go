@@ -3,7 +3,8 @@
 // agent, with nobody at the machine. It picks the right install automatically:
 //
 //   - Admin available  -> machine-wide install: a Windows service that runs
-//     before login for every user, in Program Files, listed in Programs & Features.
+//     before login for every user, in C:\ProgramData\projectBV\agent (hidden,
+//     locked to admins), listed in Programs & Features.
 //   - Standard user    -> per-user install (NO admin, NO UAC): agent in the user's
 //     AppData, auto-started at that user's login via the Run key.
 //
@@ -108,6 +109,18 @@ func relaunchDetached(args []string) error {
 // If a machine install is already there, the binary is replaced in place.
 func machineInstall(logger *log.Logger, version string) {
 	dst := config.AgentExePath()
+	// The folder must be locked down before a binary that runs as SYSTEM is put in
+	// it. If that cannot be done, nothing has changed yet: the device keeps the
+	// agent it has, wherever it is, and says why.
+	if err := winutil.LockInstallDir(); err != nil {
+		logger.Printf("install: could not secure %s: %v", config.InstallDir(), err)
+		recordUpdateResult(logger, version, "rolled-back", "could not secure the install folder: "+err.Error())
+		os.Exit(1)
+	}
+	// An agent from before 1.3.0 runs from Program Files. convergeServicePath
+	// treats that like any other off-path service: it copies the running binary to
+	// the new folder and points the service there, then the update carries on as
+	// normal. The old folder is only deleted once the new agent has proved itself.
 	if err := convergeServicePath(logger, dst); err != nil {
 		// The device is running its agent from somewhere unusual and could not be
 		// brought back. Going on from here would copy the abandoned binary at the
@@ -124,6 +137,7 @@ func machineInstall(logger *log.Logger, version string) {
 			logger.Printf("install: updating the agent failed: %v", err)
 			os.Exit(1)
 		}
+		removeLegacyInstall(logger, dst)
 		return
 	} else if err := writeAgent(dst); err != nil {
 		logger.Printf("install: writing agent failed: %v", err)
@@ -160,7 +174,28 @@ func machineInstall(logger *log.Logger, version string) {
 	recordInstalled(logger, version)
 	// A fresh install clears any leftover verdict from a past failed update.
 	recordUpdateResult(logger, version, "installed", "")
+	removeLegacyInstall(logger, dst)
 	logger.Printf("install: projectBV %s installed machine-wide and running", version)
+}
+
+// removeLegacyInstall deletes the pre-1.3.0 Program Files folder, but only once
+// the service is confirmed to be running from the new one — until then that
+// folder may hold the only agent this device can be reached through.
+func removeLegacyInstall(logger *log.Logger, dst string) {
+	legacy := config.LegacyInstallDir()
+	if !fileExists(legacy) {
+		return
+	}
+	current, err := winsvc.ImagePath()
+	if err != nil || !strings.EqualFold(current, dst) {
+		logger.Printf("install: keeping %s — the service is not confirmed on %s yet", legacy, dst)
+		return
+	}
+	if err := os.RemoveAll(legacy); err != nil {
+		logger.Printf("install: could not remove the old %s: %v", legacy, err)
+		return
+	}
+	logger.Printf("install: removed the old %s", legacy)
 }
 
 // convergeServicePath brings a rescued device back to normal before anything else

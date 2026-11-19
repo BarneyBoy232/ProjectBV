@@ -278,15 +278,20 @@ func searchTree(root, query string, limit int, deadline time.Time) []entry {
 // underInstallDir refuses any op whose target sits inside the agent's own program
 // folder, so Files can never delete or overwrite the service that carries it.
 func underInstallDir(path string) bool {
-	install, err := filepath.Abs(config.InstallDir())
-	if err != nil {
-		return false
-	}
 	target, err := filepath.Abs(path)
 	if err != nil {
 		return false
 	}
-	install = strings.ToLower(filepath.Clean(install))
 	target = strings.ToLower(filepath.Clean(target))
-	return target == install || strings.HasPrefix(target, install+string(filepath.Separator))
+	for _, dir := range []string{config.InstallDir(), config.LegacyInstallDir()} {
+		install, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		install = strings.ToLower(filepath.Clean(install))
+		if target == install || strings.HasPrefix(target, install+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

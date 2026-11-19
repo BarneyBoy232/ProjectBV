@@ -158,6 +158,28 @@ func CopyFile(src, dst string) error {
 	return out.Close()
 }
 
+// LockInstallDir creates the machine-wide install folder and gives it its own
+// ACL: SYSTEM and Administrators full control, Users read/execute only, nothing
+// inherited from ProgramData (which lets every user create files). Without this a
+// standard user could drop or swap a binary the service runs as SYSTEM.
+func LockInstallDir() error {
+	dir := config.InstallDir()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1200a9;;;BU)")
+	if err != nil {
+		return err
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return err
+	}
+	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		nil, nil, dacl, nil)
+}
+
 // WriteUninstallEntry registers projectBV in Programs & Features.
 func WriteUninstallEntry(version string) error {
 	k, _, err := registry.CreateKey(registry.LOCAL_MACHINE, uninstallKey, registry.WRITE)

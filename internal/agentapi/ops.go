@@ -128,7 +128,7 @@ func underInstallDir(path string) bool {
 		return false
 	}
 	target = strings.ToLower(filepath.Clean(target))
-	for _, dir := range []string{config.InstallDir(), config.UserInstallDir(), config.DataDir()} {
+	for _, dir := range []string{config.InstallDir(), config.LegacyInstallDir(), config.UserInstallDir(), config.DataDir()} {
 		base, err := filepath.Abs(dir)
 		if err != nil {
 			continue

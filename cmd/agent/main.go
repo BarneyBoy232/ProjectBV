@@ -51,7 +51,7 @@ func main() {
 // Program Files, so it self-elevates only in that case; a per-user install
 // removes cleanly with no admin.
 func fullUninstall(logger *log.Logger) {
-	machineInstalled := fileExists(config.AgentExePath())
+	machineInstalled := fileExists(config.AgentExePath()) || fileExists(config.LegacyAgentExePath())
 	if machineInstalled && !winutil.IsAdmin() {
 		if err := winutil.RelaunchElevated([]string{"--uninstall"}); err != nil {
 			logger.Printf("uninstall: could not elevate: %v", err)
@@ -65,6 +65,7 @@ func fullUninstall(logger *log.Logger) {
 	_ = winsvc.Control(logger, "uninstall")
 	_ = winutil.RemoveUninstallEntry()
 	_ = os.RemoveAll(config.InstallDir())
+	_ = os.RemoveAll(config.LegacyInstallDir())
 
 	// Per-user artifacts.
 	_ = winutil.RemoveRunKey()
